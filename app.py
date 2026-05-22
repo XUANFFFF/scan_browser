@@ -1,5 +1,6 @@
 """扫描文件浏览器 - 通过 SMBv1 协议访问打印机扫描共享"""
 import io
+import json
 import os
 import sys
 import time
@@ -8,34 +9,47 @@ from datetime import datetime
 from flask import Flask, render_template, send_file, jsonify
 from smb.SMBConnection import SMBConnection
 
-# PyInstaller 打包后模板路径适配
-if getattr(sys, "frozen", False):
-    template_dir = os.path.join(sys._MEIPASS, "templates")
-else:
-    template_dir = os.path.join(os.path.dirname(__file__), "templates")
+# ── 路径适配 ──
+_is_frozen = getattr(sys, "frozen", False)
+_base_dir = os.path.dirname(sys.executable) if _is_frozen else os.path.dirname(__file__)
+_template_dir = os.path.join(sys._MEIPASS, "templates") if _is_frozen else os.path.join(_base_dir, "templates")
 
-app = Flask(__name__, template_folder=template_dir)
+# ── 加载配置 ──
+_config_path = os.path.join(_base_dir, "config.json")
+_config = {}
+if os.path.exists(_config_path):
+    with open(_config_path, "r", encoding="utf-8") as f:
+        _config = json.load(f)
 
-SMB_HOST = "192.168.1.115"
-SMB_PORT = 445
-SMB_SHARE = "扫描共享文件"
-SMB_CONN_TTL = 30  # 连接缓存 30 秒
+SMB_HOST = _config.get("smb_host", "192.168.1.115")
+SMB_PORT = _config.get("smb_port", 445)
+SMB_SHARE = _config.get("smb_share", "扫描共享文件")
+SERVER_PORT = _config.get("server_port", 5088)
+SMB_CONN_TTL = 30
 
+app = Flask(__name__, template_folder=_template_dir)
+
+# ── 公共配置 API ──
+
+@app.route("/api/config")
+def get_config():
+    return jsonify({
+        "smb_host": SMB_HOST,
+        "smb_share": SMB_SHARE,
+    })
 
 # ── SMB 连接管理 ──
 
 _conn_cache = {"conn": None, "ts": 0}
 
-
 def _smb_connect():
-    """获取缓存的 SMB 连接（30秒内复用）"""
     now = time.time()
     if _conn_cache["conn"] and (now - _conn_cache["ts"]) < SMB_CONN_TTL:
         try:
-            _conn_cache["conn"].listPath(SMB_SHARE, "/")  # 探活
+            _conn_cache["conn"].listPath(SMB_SHARE, "/")
             return _conn_cache["conn"]
         except Exception:
-            pass  # 过期重连
+            pass
 
     conn = SMBConnection("", "", "scan_browser", SMB_HOST.split(".")[0],
                          use_ntlm_v2=False, is_direct_tcp=True)
@@ -46,17 +60,13 @@ def _smb_connect():
 
 
 def _serve_pdf(filename, as_attachment):
-    """通用 PDF 文件服务"""
     conn = _smb_connect()
     buf = io.BytesIO()
     conn.retrieveFile(SMB_SHARE, f"/{filename}", buf)
     buf.seek(0)
-    return send_file(
-        buf,
-        mimetype="application/pdf",
-        as_attachment=as_attachment,
-        download_name=filename if as_attachment else None,
-    )
+    return send_file(buf, mimetype="application/pdf",
+                     as_attachment=as_attachment,
+                     download_name=filename if as_attachment else None)
 
 
 def _format_size(size_bytes):
@@ -125,11 +135,11 @@ def preview_file(filename):
 # ── 启动 ──
 
 if __name__ == "__main__":
-    PORT = 5088
-    url = f"http://127.0.0.1:{PORT}"
-    print(f"  扫描文件浏览器  v1.0")
+    url = f"http://127.0.0.1:{SERVER_PORT}"
+    print(f"  扫描文件浏览器  v1.1")
+    print(f"  配置: {_config_path}")
     print(f"  地址: {url}")
     print(f"  共享: \\\\{SMB_HOST}\\{SMB_SHARE}")
     print(f"  ⚠ 仅监听 127.0.0.1，仅本机可访问")
     webbrowser.open(url)
-    app.run(host="127.0.0.1", port=PORT, debug=False)
+    app.run(host="127.0.0.1", port=SERVER_PORT, debug=False)

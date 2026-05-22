@@ -9,5 +9,9 @@ __pycache__/
 *.pyc
 *.pyo
 
+# 本地配置文件（含实际 IP，不提交）
+config.json
+
 # 本地标记文件
+.deps_installed
 .deps_installed
