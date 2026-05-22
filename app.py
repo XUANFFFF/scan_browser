@@ -1,6 +1,5 @@
-"""扫描文件浏览器 - 通过 SMBv1 协议访问打印机扫描共享"""
+"""扫描文件浏览器（内部版）- 通过 SMBv1 协议访问打印机扫描共享"""
 import io
-import json
 import os
 import sys
 import time
@@ -9,34 +8,23 @@ from datetime import datetime
 from flask import Flask, render_template, send_file, jsonify
 from smb.SMBConnection import SMBConnection
 
-# ── 路径适配 ──
+# PyInstaller 打包后模板路径适配
 _is_frozen = getattr(sys, "frozen", False)
-_base_dir = os.path.dirname(sys.executable) if _is_frozen else os.path.dirname(__file__)
-_template_dir = os.path.join(sys._MEIPASS, "templates") if _is_frozen else os.path.join(_base_dir, "templates")
+if _is_frozen:
+    template_dir = os.path.join(sys._MEIPASS, "templates")
+else:
+    template_dir = os.path.join(os.path.dirname(__file__), "templates")
 
-# ── 加载配置 ──
-_config_path = os.path.join(_base_dir, "config.json")
-_config = {}
-if os.path.exists(_config_path):
-    with open(_config_path, "r", encoding="utf-8") as f:
-        _config = json.load(f)
-
-SMB_HOST = _config.get("smb_host", "192.168.1.115")
-SMB_PORT = _config.get("smb_port", 445)
-SMB_SHARE = _config.get("smb_share", "扫描共享文件")
-SERVER_PORT = _config.get("server_port", 5088)
+# ── 配置（内部版直接写死）──
+SMB_HOST = "192.168.1.115"
+SMB_PORT = 445
+SMB_SHARE = "扫描共享文件"
+SERVER_PORT = 5088
 SMB_CONN_TTL = 30
 
-app = Flask(__name__, template_folder=_template_dir)
+app = Flask(__name__, template_folder=template_dir)
 
 # ── 公共配置 API ──
-
-@app.route("/api/config")
-def get_config():
-    return jsonify({
-        "smb_host": SMB_HOST,
-        "smb_share": SMB_SHARE,
-    })
 
 # ── SMB 连接管理 ──
 
@@ -137,7 +125,6 @@ def preview_file(filename):
 if __name__ == "__main__":
     url = f"http://127.0.0.1:{SERVER_PORT}"
     print(f"  扫描文件浏览器  v1.1")
-    print(f"  配置: {_config_path}")
     print(f"  地址: {url}")
     print(f"  共享: \\\\{SMB_HOST}\\{SMB_SHARE}")
     print(f"  ⚠ 仅监听 127.0.0.1，仅本机可访问")

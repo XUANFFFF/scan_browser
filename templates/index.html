@@ -347,7 +347,7 @@
   <header class="header">
     <div>
       <h1 class="header-title">扫描文件</h1>
-      <div class="header-sub" id="headerPath">—</div>
+      <div class="header-sub">192.168.1.115 / 扫描共享文件</div>
     </div>
     <div class="toolbar">
       <span class="stat-label" id="stats">—</span>
@@ -506,13 +506,6 @@ function doPreview(fn) {
 function doDownload(fn) {
   window.open(BASE + "/api/download/" + encodeURIComponent(fn));
 }
-
-// Load server config (path display)
-fetch(BASE + "/api/config")
-  .then(function(r) { return r.json(); })
-  .then(function(cfg) {
-    document.getElementById("headerPath").textContent = cfg.smb_host + " / " + cfg.smb_share;
-  });
 
 // Initial load
 loadList();
