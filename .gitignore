@@ -1,0 +1,13 @@
+# 构建产物
+dist/
+_build_env/
+build/
+*.spec
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 本地标记文件
+.deps_installed
