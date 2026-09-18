@@ -8,16 +8,18 @@
 #     → publish job 下载本 run 的全部产物、解掉外层 ZIP、
 #       生成合并的 SHA256SUMS.txt，创建 Release 并上传资产
 #
-# Release 资产：
-#   扫描文件浏览器-Windows-x64.exe       公开版
-#   扫描文件浏览器-MCF-Windows-x64.exe   内部版（配置写死）
-#   扫描文件浏览器-macOS-arm64.zip       内层分发 ZIP（可直接发同事）
-#   SHA256SUMS.txt                       以上全部资产的校验和
+# Release 资产（ASCII 文件名 —— 实测 GitHub 会把资产名里的非 ASCII
+# 字符直接剥掉，就算 URL 编码正确也没用，所以中文只能放说明里）：
+#   ScanBrowser-Windows-x64.exe       公开版（= 扫描文件浏览器）
+#   ScanBrowser-MCF-Windows-x64.exe   内部版（配置写死）
+#   ScanBrowser-macOS-arm64.zip       内层分发 ZIP（可直接发同事）
+#   SHA256SUMS.txt                    以上全部资产的校验和
 #
 # 说明：
 #   - 发布到 Release 的 macOS 包是「内层分发 ZIP」——Actions Artifact
 #     的外层 ZIP 只是传输封装，同事不需要解两次
-#   - Windows 资产改名加 -x64 后缀（Issue 约定的命名），避免和 macOS 包混淆
+#   - Actions Artifact 名保持中文不受影响（Artifact 名支持 UTF-8），
+#     只有 Release 资产名有 ASCII 限制
 #   - 不做签名/公证（内部测试版），见 BUILD_MAC.md
 
 name: Release
@@ -68,20 +70,20 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p assets
-          # macOS 内层分发 ZIP + 其 .sha256（.sha256 稍后由合并 sums 取代）
-          cp "raw/扫描文件浏览器-macOS-arm64/扫描文件浏览器-macOS-arm64.zip" assets/
-          # Windows EXE 按发布命名加架构后缀（与 Issue 约定一致）
-          cp "raw/扫描文件浏览器-Windows-x64/扫描文件浏览器.exe"     "assets/扫描文件浏览器-Windows-x64.exe"
-          cp "raw/扫描文件浏览器-Windows-x64/扫描文件浏览器-MCF.exe" "assets/扫描文件浏览器-MCF-Windows-x64.exe"
+          # macOS 内层分发 ZIP（发布资产名用 ASCII，中文会被 GitHub 剥掉）
+          cp "raw/扫描文件浏览器-macOS-arm64/扫描文件浏览器-macOS-arm64.zip" "assets/ScanBrowser-macOS-arm64.zip"
+          # Windows EXE 按发布命名（ASCII）
+          cp "raw/扫描文件浏览器-Windows-x64/扫描文件浏览器.exe"     "assets/ScanBrowser-Windows-x64.exe"
+          cp "raw/扫描文件浏览器-Windows-x64/扫描文件浏览器-MCF.exe" "assets/ScanBrowser-MCF-Windows-x64.exe"
 
       - name: 生成合并的 SHA256SUMS.txt
         run: |
           set -euo pipefail
           cd assets
           sha256sum \
-            "扫描文件浏览器-Windows-x64.exe" \
-            "扫描文件浏览器-MCF-Windows-x64.exe" \
-            "扫描文件浏览器-macOS-arm64.zip" \
+            "ScanBrowser-Windows-x64.exe" \
+            "ScanBrowser-MCF-Windows-x64.exe" \
+            "ScanBrowser-macOS-arm64.zip" \
             > SHA256SUMS.txt
           echo "--- SHA256SUMS.txt ---"
           cat SHA256SUMS.txt
