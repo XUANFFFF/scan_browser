@@ -27,6 +27,13 @@ Flask 与 SMB 逻辑一行不改，这里只负责「开窗口 / 关窗口 / 收
 
 5. 本地服务端口在 Windows 上要关掉 SO_REUSEADDR，否则第二个实例会「成功」
    绑到同一端口，两个窗口实际共用一个服务（见 _port_is_free）。
+
+外观（不改窗口结构）：
+
+6. 窗口保留系统原生边框与按钮（最小化/最大化/关闭/拖拽/缩放全部照旧），
+   但 Windows 默认那条深色标题栏与应用浅色纸张风格不搭，所以用 DWM 把
+   标题栏底色、标题文字色、窗口描边色改成浅色（见 _apply_light_titlebar）。
+   只设置 DWM 颜色属性，不动任何窗口样式，因此原生行为完全不受影响。
 """
 import logging
 import os
@@ -176,6 +183,137 @@ def wait_until_ready(host, port, timeout=15.0):
             probe.close()
         time.sleep(0.1)
     return False
+
+
+# ── 浅色标题栏（仅 Windows）──
+#
+# 只设置 DWM 的「颜色」属性，不添加/移除任何窗口样式位，所以原生标题栏的
+# 最小化/最大化/关闭、拖拽、边缘缩放全部保持系统默认行为。
+#   * DWMWA_USE_IMMERSIVE_DARK_MODE 关掉（设 0）—— 否则系统深色主题会把标题栏
+#     又拉回深色，颜色设置也会被压制；
+#   * DWMWA_CAPTION_COLOR / TEXT_COLOR / BORDER_COLOR 依次是标题栏底色、
+#     标题文字色、窗口外描边色。
+# 后三个属性需要 Windows 11（build 22000+），旧系统调用会返回失败 —— 静默忽略，
+# 标题栏保持系统默认外观，不影响任何功能。
+_DWMWA_USE_IMMERSIVE_DARK_MODE = 20        # Win10 1809~2004 上该属性号是 19，都设一遍
+_DWMWA_USE_IMMERSIVE_DARK_MODE_LEGACY = 19
+_DWMWA_BORDER_COLOR = 34
+_DWMWA_CAPTION_COLOR = 35
+_DWMWA_TEXT_COLOR = 36
+
+
+def _colorref(hex_rgb):
+    """'#rrggbb' → Windows COLORREF。
+
+    注意字节序与网页相反：COLORREF 是 0x00BBGGRR，所以要反过来拼。
+    """
+    h = hex_rgb.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return (b << 16) | (g << 8) | r
+
+
+# 与应用浅色主题对齐的标题栏配色（对应 CSS 里的 --surface-0 / --text-primary / --border）
+TITLEBAR_CAPTION_COLOR = _colorref("#fbfbfa")
+TITLEBAR_TEXT_COLOR = _colorref("#22222a")
+TITLEBAR_BORDER_COLOR = _colorref("#e3e3e0")
+
+
+def _find_window_hwnd(title):
+    """找到「本进程 + 标题含 title」的可见顶层窗口句柄，找不到返回 None。
+
+    按 PID 过滤很关键：用户可能同时开着多个实例，不能把别人的标题栏也改了。
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    user32.EnumWindows.argtypes = [WNDENUMPROC, wintypes.LPARAM]
+    user32.EnumWindows.restype = wintypes.BOOL
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowTextW.restype = ctypes.c_int
+
+    pid = os.getpid()
+    found = []
+
+    def _enum(hwnd, _lparam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        wpid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(wpid))
+        if wpid.value != pid:
+            return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length <= 0:
+            return True
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buf, length + 1)
+        if title in buf.value:
+            found.append(hwnd)
+            return False          # 找到了，停止枚举
+        return True
+
+    user32.EnumWindows(WNDENUMPROC(_enum), 0)
+    return found[0] if found else None
+
+
+def _apply_light_titlebar(title, timeout=12.0):
+    """窗口一出现就把标题栏染成浅色。
+
+    由后台线程调用：窗口是主线程建的，这里只轮询等待它出现，找到后设置颜色。
+    整个过程失败只影响「好不好看」，绝不影响窗口能不能用，所以全程吞异常。
+    """
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        dwmapi = ctypes.windll.dwmapi
+        dwmapi.DwmSetWindowAttribute.argtypes = [
+            wintypes.HWND, ctypes.c_uint, ctypes.POINTER(ctypes.c_int), ctypes.c_uint]
+        dwmapi.DwmSetWindowAttribute.restype = ctypes.c_long
+    except Exception:
+        return
+
+    # 轮询等窗口出现（首次启动要等 WebView2 + 本地服务都起来）
+    hwnd = None
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            hwnd = _find_window_hwnd(title)
+        except Exception:
+            hwnd = None
+        if hwnd:
+            break
+        time.sleep(0.2)
+    if not hwnd:
+        logger.info("未找到桌面窗口句柄，跳过标题栏配色")
+        return
+
+    def _set(attr, value):
+        try:
+            v = ctypes.c_int(value)
+            dwmapi.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(v), ctypes.sizeof(v))
+        except Exception:
+            pass
+
+    # 设三遍：窗口刚出现时设一次，之后 1s、2s 再各补一次 ——
+    # WebView2 加载完成时可能重设窗口主题，补设可以覆盖回去。
+    for delay in (0.0, 1.0, 2.0):
+        if delay:
+            time.sleep(delay)
+        _set(_DWMWA_USE_IMMERSIVE_DARK_MODE, 0)
+        _set(_DWMWA_USE_IMMERSIVE_DARK_MODE_LEGACY, 0)
+        _set(_DWMWA_CAPTION_COLOR, TITLEBAR_CAPTION_COLOR)
+        _set(_DWMWA_TEXT_COLOR, TITLEBAR_TEXT_COLOR)
+        _set(_DWMWA_BORDER_COLOR, TITLEBAR_BORDER_COLOR)
+    logger.info("已应用浅色标题栏（hwnd=%s）", hwnd)
 
 
 # ── 桌面窗口 ──
@@ -331,6 +469,14 @@ def run(app, host, port, title=WINDOW_TITLE):
         )
         if window is None:
             raise DesktopUnavailable("创建桌面窗口失败")
+
+        # 窗口一出现就把标题栏改成浅色（后台轮询；失败只影响美观，不影响功能）
+        threading.Thread(
+            target=_apply_light_titlebar,
+            args=(title,),
+            name="titlebar-tint",
+            daemon=True,
+        ).start()
 
         try:
             # private_mode=False：本工具不需要 WebView2 保存任何会话数据，

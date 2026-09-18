@@ -47,7 +47,9 @@ def create_app(config, mode="browser"):
 
     @app.route("/")
     def index():
-        return render_template("index.html")
+        # 把 mode 传进模板：桌面模式给 <body> 加 is-desktop 类，
+        # 用于「窗口自带标题栏 → 压缩页面顶部留白」这类只在桌面模式生效的样式。
+        return render_template("index.html", mode=mode)
 
     # ── API ──
 

@@ -121,6 +121,11 @@
     justify-content: space-between;
     gap: var(--space-4);
   }
+  /* 桌面模式下窗口自带一条标题栏，页面顶部再留 56px 就显得过于空；
+     压缩到 24px，让首屏内容整体上移（仅桌面模式，浏览器模式保持原样）。 */
+  body.is-desktop .header {
+    padding-top: var(--space-6);
+  }
   .header-title {
     font-size: 1.75rem;
     font-weight: 600;
@@ -530,7 +535,7 @@
   }
 </style>
 </head>
-<body>
+<body{% if mode == 'desktop' %} class="is-desktop"{% endif %}>
 
 <div class="shell">
   <header class="header">
