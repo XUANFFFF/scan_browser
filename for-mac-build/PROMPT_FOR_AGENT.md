@@ -1,0 +1,81 @@
+# 📦 macOS 版扫描文件浏览器 — 内部版打包包
+
+> 把这个文件夹发给用 Mac 的同事，里面是一个**完整的 AI 代理提示词**，
+> 让同事直接丢给 AI agent（如 WorkBuddy）就能自动完成打包。
+>
+> **此包为内部版，IP 已硬编码，零配置，双击即用。**
+
+---
+
+## 文件夹内容
+
+| 文件 | 用途 |
+|---|---|
+| `app_internal.py` | 内部版主程序（IP 已硬编码，零配置） |
+| `scan-browser-mac.spec` | PyInstaller 打包配置文件 |
+| `requirements.txt` | Python 依赖清单 |
+| `启动.command` | macOS 双击启动脚本（备选） |
+| `templates/index.html` | 前端页面 |
+| `PROMPT_FOR_AGENT.md` | ← 给 AI agent 的 prompt，下方可直接复制 |
+
+---
+
+## 👇 以下是给 AI agent 的 prompt（可直接复制使用）
+
+> 把下面这段内容直接发给你的 AI 助手（如 WorkBuddy），它会自动完成打包。
+> 过程中会问你 SMB 服务器 IP。
+
+---
+
+```
+# 任务：将扫描文件浏览器打包为 macOS 独立 .app（内部版）
+
+## 项目背景
+
+办公室打印机（富士施乐 Apeos C5571）通过 SMBv1 协议把扫描文件存到局域网共享。
+此工具用 Python 的 `pysmb` 库直连共享，提供浏览器界面浏览和下载扫描文件（PDF / 图片）。
+已有一个 Windows 版 .exe，现在需要 macOS 版。
+
+当前目录已包含所有需要的源文件：
+- `app_internal.py` — Flask 后端（内部版，硬编码配置）
+- `scan-browser-mac.spec` — PyInstaller 打包配置（已固化为内部版）
+- `requirements.txt` — Python 依赖
+- `启动.command` — macOS 双击启动脚本
+- `templates/index.html` — 前端页面
+
+## 打包步骤
+
+### 1️⃣ 确认 IP 配置
+
+先问我：**你们办公室的 SMB 服务器 IP 是多少？**
+- 如果 IP 是 `192.168.1.115` → 不用改代码，直接进行下一步
+- 如果 IP 不同 → 我告诉你正确 IP，你修改 `app_internal.py` 中的 `SMB_HOST` 变量
+
+### 2️⃣ 安装依赖
+
+```bash
+pip3 install pyinstaller flask pysmb
+```
+
+权限不够就加 `--user`。
+
+### 3️⃣ 执行打包
+
+```bash
+pyinstaller scan-browser-mac.spec
+```
+
+### 4️⃣ 验证
+
+```bash
+ls -lah dist/扫描文件浏览器.app
+```
+
+确认文件约 20~40 MB。
+
+## 交付
+
+- 将 `dist/扫描文件浏览器.app` 和 `启动.command` 放入同一文件夹
+- 告知我打包成功、文件大小
+- 提醒同事：首次打开 `.app` 需右键 →「打开」绕过 macOS 安全提示
+```

@@ -3,6 +3,8 @@ dist/
 _build_env/
 build/
 *.spec
+# 例外：macOS 打包分发包 for-mac-build/ 内的 spec 是交付物，必须入库
+!for-mac-build/*.spec
 
 # Python
 __pycache__/
@@ -13,5 +15,4 @@ __pycache__/
 config.json
 
 # 本地标记文件
-.deps_installed
 .deps_installed
