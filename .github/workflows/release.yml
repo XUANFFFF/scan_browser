@@ -1,0 +1,108 @@
+# 正式发布：推 v* tag 自动出 Release，产物全部由 CI 构建。
+#
+# 流程：
+#   push tag v*
+#     → 并行调用 build-macos.yml（arm64）与 build-windows.yml
+#     → 两个构建各自上传 Actions Artifact（与手动触发时完全同一套
+#       构建 + 校验 + 冒烟，不带任何"发布专用捷径"）
+#     → publish job 下载本 run 的全部产物、解掉外层 ZIP、
+#       生成合并的 SHA256SUMS.txt，创建 Release 并上传资产
+#
+# Release 资产：
+#   扫描文件浏览器-Windows-x64.exe       公开版
+#   扫描文件浏览器-MCF-Windows-x64.exe   内部版（配置写死）
+#   扫描文件浏览器-macOS-arm64.zip       内层分发 ZIP（可直接发同事）
+#   SHA256SUMS.txt                       以上全部资产的校验和
+#
+# 说明：
+#   - 发布到 Release 的 macOS 包是「内层分发 ZIP」——Actions Artifact
+#     的外层 ZIP 只是传输封装，同事不需要解两次
+#   - Windows 资产改名加 -x64 后缀（Issue 约定的命名），避免和 macOS 包混淆
+#   - 不做签名/公证（内部测试版），见 BUILD_MAC.md
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS arm64
+    uses: ./.github/workflows/build-macos.yml
+    with:
+      arch: arm64
+
+  windows:
+    name: Windows x64
+    uses: ./.github/workflows/build-windows.yml
+
+  publish:
+    name: 汇总并发布 Release
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write           # 创建 Release / 上传资产必需
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: 检出代码（读发布说明）
+        uses: actions/checkout@v6
+
+      # 两个被调用 workflow 的产物都挂在同一个 run（本 run）上。
+      # 注意：gh run download 会自动解开 Artifact 的「传输外层 ZIP」，
+      # 拿到的直接是上传时的文件（内层分发 ZIP 本体），不需要再解一次。
+      - name: 下载本 run 的全部 Artifact
+        run: |
+          set -euo pipefail
+          mkdir -p raw
+          gh run download "$GITHUB_RUN_ID" --dir raw
+          find raw -type f | sort
+
+      - name: 铺平资产并按发布命名
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          # macOS 内层分发 ZIP + 其 .sha256（.sha256 稍后由合并 sums 取代）
+          cp "raw/扫描文件浏览器-macOS-arm64/扫描文件浏览器-macOS-arm64.zip" assets/
+          # Windows EXE 按发布命名加架构后缀（与 Issue 约定一致）
+          cp "raw/扫描文件浏览器-Windows-x64/扫描文件浏览器.exe"     "assets/扫描文件浏览器-Windows-x64.exe"
+          cp "raw/扫描文件浏览器-Windows-x64/扫描文件浏览器-MCF.exe" "assets/扫描文件浏览器-MCF-Windows-x64.exe"
+
+      - name: 生成合并的 SHA256SUMS.txt
+        run: |
+          set -euo pipefail
+          cd assets
+          sha256sum \
+            "扫描文件浏览器-Windows-x64.exe" \
+            "扫描文件浏览器-MCF-Windows-x64.exe" \
+            "扫描文件浏览器-macOS-arm64.zip" \
+            > SHA256SUMS.txt
+          echo "--- SHA256SUMS.txt ---"
+          cat SHA256SUMS.txt
+
+      - name: 校验和自检（sha256sum -c）
+        run: |
+          cd assets
+          sha256sum -c SHA256SUMS.txt
+
+      - name: 创建 Release 并上传资产
+        run: |
+          set -euo pipefail
+          NOTES=".github/release-notes/${TAG}.md"
+          if [ ! -f "$NOTES" ]; then
+            printf '%s\n' "扫描文件浏览器 ${TAG}" "" "详见 README。" > "$NOTES"
+          fi
+          gh release create "$TAG" \
+            --target "$GITHUB_SHA" \
+            --title "扫描文件浏览器 $TAG" \
+            --notes-file "$NOTES"
+          gh release upload "$TAG" assets/* --clobber
+          echo "--- 发布结果 ---"
+          gh release view "$TAG" --json name,url,assets --jq \
+            '"\(.name)\n\(.url)\n资产:\n" + ([.assets[].name] | map("  - \(.)") | join("\n"))'

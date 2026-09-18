@@ -17,6 +17,8 @@ name: Build Windows
 
 on:
   workflow_dispatch:
+  # 可复用：release.yml 在推 v* tag 时调用本 workflow 出正式发布包
+  workflow_call:
 
 permissions:
   contents: read                # 最小权限
