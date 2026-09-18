@@ -194,11 +194,24 @@ jobs:
 
           # 把 ZIP 内容打进日志：这样在 run 页面就能直接确认
           # 「包里到底有没有 .app、权限对不对」，不必先下载下来看。
-          echo "--- ZIP 内容 ---"
-          unzip -l "$NAME.zip"
+          #
+          # 这里用 Python 的 zipfile 而不是 `unzip -l`：macOS 自带的 BSD unzip
+          # 不认 zip 的 UTF-8 文件名标志，中文名会被显示成乱码，容易误判成包坏了。
+          echo "--- ZIP 内容（权限 / 大小 / 路径）---"
+          .buildenv/bin/python - "$NAME.zip" <<'PY'
+          import stat
+          import sys
+          import zipfile
 
-          echo "--- 关键条目的权限位（应为 -rwxr-xr-x）---"
-          unzip -Z "$NAME.zip" | grep -E "MacOS/|启动\.command|Info\.plist|\.icns" || true
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              total = 0
+              for i in z.infolist():
+                  total += i.file_size
+                  mode = i.external_attr >> 16
+                  perm = stat.filemode(mode) if mode else "-"
+                  print("  %-11s %10d  %s" % (perm, i.file_size, i.filename))
+              print("  %d 个条目，解压后共 %.1f MB" % (len(z.infolist()), total / 1048576))
+          PY
 
       - name: 上传 Actions Artifact
         uses: actions/upload-artifact@v6
