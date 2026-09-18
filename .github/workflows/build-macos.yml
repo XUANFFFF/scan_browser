@@ -14,7 +14,8 @@
 #       第一阶段不接 Release 自动上传；等手动构建稳定后再单独开 Issue 加。
 #
 # 签名：按「内部测试版」处理 —— 不做 Developer ID 签名、不做公证。
-#       测试同事首次打开时按 Gatekeeper 提示「右键 → 打开」即可。
+#       测试同事首次打开时按「先打开一次 → 系统设置 → 隐私与安全性 → 仍要打开」
+#       放行即可（新版 macOS 已不支持「右键 → 打开」）。
 #       后续要正式对外分发，再单独开 Issue 处理证书与 notarization。
 # ─────────────────────────────────────────────────────────────────────
 name: Build macOS
@@ -134,12 +135,17 @@ jobs:
       # 独立虚拟环境：不要把 runner 上预装的库（numpy/pandas 等）卷进产物。
       # PyInstaller 是按 import 图收集的，但系统环境里存在的同名包会干扰
       # hook 判断，干净 venv 是最省事的做法。
+      # 版本用 constraints-build.txt 钉住（与 Windows 本地构建同一套约束），
+      # 保证任何时候重跑都用已验证过的组合出包。
       - name: 创建虚拟环境并安装依赖
         run: |
           set -euo pipefail
+          # constraints-build.txt 在仓库根（working-directory 是 for-mac-build/）
+          CONS="$GITHUB_WORKSPACE/constraints-build.txt"
           python -m venv .buildenv
           .buildenv/bin/python -m pip install --upgrade pip
-          .buildenv/bin/python -m pip install -r requirements.txt pyinstaller
+          .buildenv/bin/python -m pip install -r requirements.txt -c "$CONS"
+          .buildenv/bin/python -m pip install pyinstaller -c "$CONS"
           echo "--- 已安装 ---"
           .buildenv/bin/python -m pip list
 
@@ -185,10 +191,18 @@ jobs:
             '' \
             '1. 解压得到本文件夹' \
             '2. 双击「扫描文件浏览器.app」' \
-            '3. 首次打开若提示「无法验证开发者」：右键点 .app → 选「打开」→ 再点一次「打开」' \
-            '4. 若 .app 打不开，可改用同目录的「启动.command」' \
+            '3. 首次打开若提示「无法验证开发者」，这样放行（新版 macOS 不再支持右键打开）：' \
+            '     先直接双击打开一次（哪怕失败也没关系）' \
+            '     → 系统设置 → 隐私与安全性 → 页面底部找到「扫描文件浏览器」' \
+            '     → 点「仍要打开」→ 在弹窗里再点一次「打开」' \
+            '4. 若提示「已损坏，无法打开」：在终端进入本目录，执行' \
+            '     xattr -dr com.apple.quarantine 扫描文件浏览器.app' \
+            '   然后重新双击。应用仍打不开时，可双击「启动.command」查看诊断信息' \
+            '   （环境 / 签名 / Gatekeeper 状态与处理步骤）。' \
             '' \
-            '说明：本包为内部测试版，未做 Apple 签名与公证。' \
+            '说明：本版本为内部测试版，未使用 Apple Developer ID 签名，' \
+            '且未经过 Apple notarization（公证）；程序带有构建时生成的' \
+            'ad-hoc 签名（用于完整性自校验，CI 已验证通过）。' \
             '需要连公司内网才看得到扫描文件。' \
             > "$STAGE/使用说明.txt"
 

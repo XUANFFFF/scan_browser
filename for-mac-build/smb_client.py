@@ -8,6 +8,7 @@ Web 层只负责请求/响应，桌面壳只负责窗口生命周期，两边都
 """
 import io
 import os
+import posixpath
 import re
 import time
 from datetime import datetime
@@ -53,6 +54,48 @@ TYPE_MAP = {
 def file_ext(filename):
     """取小写扩展名（含点），如 '.jpg'"""
     return os.path.splitext(filename)[1].lower()
+
+
+class InvalidSharePath(ValueError):
+    """请求的共享路径不合法（目录穿越 / 绝对路径等），对应 HTTP 400。"""
+
+
+# 合法的共享路径段：不含空段 / 点段，且不是「.」开头（顺带排除 macOS 的 ._* 元数据）
+_SEGMENT_RE = re.compile(r"^[^.].*$")
+
+
+def sanitize_share_path(path):
+    """校验「相对共享根的文件路径」，返回原字符串；不合法抛 InvalidSharePath。
+
+    HTTP 边界（/api/preview、/api/download）拿到的路径一律先过这里，
+    不依赖 SMB 服务端拒绝异常路径。规则从紧：
+    - 必须是相对路径，禁止盘符 / 反斜杠 / 开头结尾的 /
+    - 逐段校验：不允许空段（a//b）、点段（a/./b）、..（穿越）
+    - 禁止控制字符与冒号（NTFS 备用数据流 file:stream）
+    - 规范化后必须与原串一致，杜绝任何形式的逃逸
+    """
+    if not isinstance(path, str):
+        raise InvalidSharePath("路径类型不合法")
+    p = path.strip()
+    if not p:
+        raise InvalidSharePath("路径为空")
+    if "\x00" in p or any(ord(c) < 32 for c in p):
+        raise InvalidSharePath("路径含控制字符")
+    if "\\" in p:
+        raise InvalidSharePath("路径不允许反斜杠")
+    if ":" in p:
+        raise InvalidSharePath("路径不允许包含冒号")
+    if p.startswith("/") or p.endswith("/"):
+        raise InvalidSharePath("路径不能以 / 开头或结尾")
+    segments = p.split("/")
+    for seg in segments:
+        if not _SEGMENT_RE.match(seg) or seg == "..":
+            raise InvalidSharePath("路径段不合法: %r" % seg)
+    # 双保险：规范化后必须与原串一致（仍为相对路径且无冗余段）
+    norm = posixpath.normpath(p)
+    if norm != p or norm.startswith("/"):
+        raise InvalidSharePath("路径规范化后越界")
+    return p
 
 
 def file_mime(filename):
@@ -215,7 +258,10 @@ class SMBClient(object):
         """把共享里的文件读进内存，返回 seek 到开头的 BytesIO。
 
         relpath 是相对共享根的路径，可能含子目录（如 20260918094501/xxx.jpg）。
+        先过 sanitize_share_path：这是 SMB 层的边界，无论调用方有没有校验
+        （webapp 校验过，但未来新调用方未必），这里都要再拦一次。
         """
+        relpath = sanitize_share_path(relpath)
         conn = self.connect()
         buf = io.BytesIO()
         conn.retrieveFile(self.config.share, "/" + relpath, buf)

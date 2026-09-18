@@ -2,6 +2,7 @@
 dist/
 _build_env/
 .buildenv/
+.buildenv*/
 build*/
 *.spec
 # 例外：macOS 打包分发包 for-mac-build/ 内的 spec 是交付物，必须入库

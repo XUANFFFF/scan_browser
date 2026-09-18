@@ -70,6 +70,21 @@ python app.py --desktop       # 桌面窗口
 
 或双击 `启动.bat`（会自动安装依赖并启动）。
 
+### 打包 / 升级依赖须知
+
+`requirements.txt` 面向开发（宽泛范围）；**打包**必须叠加 `constraints-build.txt`
+（钉住已验证的版本组合，Windows 与 macOS 共用一套）：
+
+```bash
+pip install -r requirements.txt -c constraints-build.txt
+pip install pyinstaller -c constraints-build.txt
+```
+
+要升级依赖：改 `constraints-build.txt`（根目录与 `for-mac-build/` 两处同步），
+Windows 重新打包并冒烟（列表/预览/子目录另存为/关窗），macOS 跑一次 Actions
+构建确认闭环验证（含 codesign）全绿，两边都过再提交。流程细节见
+`constraints-build.txt` 文件头注释。
+
 ## 配置指南
 
 编辑 `config.json`：
@@ -130,17 +145,22 @@ scan_browser/
 ├── make_icons.py           # 由源图生成 icon.ico / icon.icns
 ├── config.json             # 本地配置（不提交 Git）
 ├── config.example.json     # 配置模板
-├── requirements.txt        # Python 依赖
+├── requirements.txt        # Python 依赖（开发用，宽泛范围）
+├── constraints-build.txt   # 打包版本约束（钉住已验证组合，构建必用）
+├── tests/
+│   └── test_core.py        # 业务单元测试（不依赖真实共享）
 ├── 启动.bat / 启动.command   # 一键启动脚本
 ├── build_exe.sh            # Windows EXE 打包脚本
 ├── for-mac-build/          # macOS 打包分发包（spec + icon.icns + 文档）
 ├── .github/
 │   ├── workflows/
-│   │   └── build-macos.yml           # 云端构建 macOS 版
+│   │   ├── build-macos.yml           # 云端构建 macOS 版
+│   │   └── build-windows.yml         # 云端构建 Windows 版
 │   └── scripts/
 │       ├── make_macos_zip.py         # 打分发 ZIP（云端/本地共用）
 │       ├── verify_macos_bundle.py    # 校验 PyInstaller 产物（.app）
-│       └── verify_macos_zip.py       # 闭环校验：解开分发 ZIP 再验一遍
+│       ├── verify_macos_zip.py       # 闭环校验：解开分发 ZIP 再验一遍
+│       └── smoke_windows.sh          # Windows EXE 冒烟（localhost 探针）
 └── 扫描文件浏览器.log        # 运行日志（排障用，运行后生成）
 ```
 
@@ -155,13 +175,31 @@ scan_browser/
 | `GET /api/preview/<路径>` | 预览（inline），路径可含子目录 |
 | `GET /api/download/<路径>` | 下载（attachment），路径可含子目录 |
 
-服务始终只监听 `127.0.0.1`，不暴露到局域网。
+服务始终只监听 `127.0.0.1`，不暴露到局域网。预览/下载路径会做显式安全校验
+（穿越、绝对路径、反斜杠、空段等一律 `400`），不依赖 SMB 服务端拒绝。
 
 ## 构建 EXE
 
+推荐直接用仓库里的脚本（依赖版本由 `constraints-build.txt` 钉住）：
+
+```bash
+# CI 里也是这么跑的（见 .github/workflows/build-windows.yml）
+python -m venv _build_env
+_build_env\Scripts\pip install -r requirements.txt -c constraints-build.txt
+_build_env\Scripts\pip install pyinstaller -c constraints-build.txt
+PYBIN="$(pwd)/_build_env/Scripts/python.exe" bash build_exe.sh   # Git Bash / CI
+```
+
+Windows 包也可以云端构建：仓库 → **Actions** → **Build Windows** → **Run workflow**，
+产物 Artifact「扫描文件浏览器-Windows-x64」含两个 EXE + `SHA256SUMS.txt`，
+构建时会先跑单元测试再做 localhost 冒烟探针。
+
+手打单条命令（等价于 `build_exe.sh` 的公开版）：
+
 ```bash
 python -m venv _build_env
-_build_env\Scripts\pip install flask pysmb pywebview pyinstaller
+_build_env\Scripts\pip install -r requirements.txt -c constraints-build.txt
+_build_env\Scripts\pip install pyinstaller -c constraints-build.txt
 
 _build_env\Scripts\pyinstaller --onefile --windowed ^
   --add-data "templates;templates" ^
@@ -185,7 +223,11 @@ macOS 包只能在 macOS 上打，但**不用为此专门养一台 Mac** —— 
 4. **下载到的是外层 ZIP**（Actions 自己打的）；解开后里面的
    `扫描文件浏览器-macOS-arm64.zip` 才是真正要发给同事的分发包
 
-产物是**内部测试版**：未做 Apple 签名与公证，同事首次打开需右键 →「打开」。
+产物是**内部测试版**：程序带构建时生成的 ad-hoc 签名（完整性自校验，CI 已验证），
+但未使用 Apple Developer ID 签名、未经 Apple notarization（公证）。同事首次打开
+需按新版 macOS 流程放行：先双击打开一次 → 系统设置 → 隐私与安全性 →
+「仍要打开」→ 再确认（右键打开已不被支持；若提示「已损坏」，用
+`xattr -dr com.apple.quarantine 扫描文件浏览器.app` 去掉隔离标记）。
 CI 做两轮校验 —— 先验 PyInstaller 生成的 `.app`，再**把分发 ZIP 解开重验一遍**
 （含中文路径与权限位、`codesign --verify --deep --strict` 签名、启动探针），
 两轮都通过才允许上传 Artifact；全程**不会去连公司内网 SMB**。

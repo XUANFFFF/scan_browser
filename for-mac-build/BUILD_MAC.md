@@ -59,8 +59,8 @@ GitHub Actions 的 Artifact **本身就是一个 ZIP**。所以从网页下载�
 
 ```
 扫描文件浏览器-macOS-arm64/
-├── 扫描文件浏览器.app      ← 双击即可运行
-├── 启动.command            ← 备用启动脚本（.app 打不开时用）
+├── 扫描文件浏览器.app      ← 双击即可运行（程序本体只有这一份）
+├── 启动.command            ← 诊断入口：打印环境/签名/Gatekeeper 状态与处理步骤
 └── 使用说明.txt            ← 给同事看的简短说明
 ```
 
@@ -125,16 +125,35 @@ shasum -a 256 -c 扫描文件浏览器-macOS-arm64.zip.sha256
 
 ## 首次打开的提示
 
-包是**内部测试版**：不做 Developer ID 签名，也不做公证。所以同事第一次打开
-大概率会看到「无法验证开发者」，处理方式：
+包是**内部测试版**：程序带有构建时生成的 **ad-hoc 签名**（用于完整性自校验，
+CI 已验证），但**未使用 Apple Developer ID 签名**，也**未经过 Apple
+notarization（公证）**。所以同事第一次打开大概率会看到「无法验证开发者」。
+
+⚠️ 新版 macOS（Sequoia 起）**已不再支持**老教程里的「右键 → 打开」，
+按这个流程放行：
 
 ```
-右键点「扫描文件浏览器.app」
-  → 选「打开」
-  → 再点一次「打开」
+先直接双击打开一次（哪怕失败也没关系）
+  → 系统设置
+  → 隐私与安全性
+  → 在页面底部找到「扫描文件浏览器」
+  → 点「仍要打开」
+  → 在弹窗里再点一次「打开」
 ```
 
 之后双击就能正常用。
+
+若提示的是「**已损坏，无法打开**」，不是权限问题，而是 macOS 给下载文件打了
+隔离标记。在终端进入解压目录执行下面这句后再打开：
+
+```bash
+xattr -dr com.apple.quarantine 扫描文件浏览器.app
+```
+
+> 分发包里的「启动.command」是**诊断入口**：双击它会打印 macOS 版本、CPU
+> 架构、.app 的签名与 Gatekeeper 评估状态，并给出对应的处理步骤 ——
+> 它不是备用启动方式（分发包里程序本体只有 .app 一份，脚本不带源码与环境）。
+> 应用打不开时先跑它，把输出截图发给维护者最省事。
 
 ## 重新打包
 
@@ -158,9 +177,11 @@ cd /路径/到/for-mac-build/
 python3 -m venv .buildenv
 source .buildenv/bin/activate
 
-# 3. 安装打包工具和项目依赖
+# 3. 安装打包工具和项目依赖（版本由 constraints-build.txt 钉住，
+#    与云端 CI 用的是同一套已验证组合）
 pip install --upgrade pip
-pip install -r requirements.txt pyinstaller
+pip install -r requirements.txt -c constraints-build.txt
+pip install pyinstaller -c constraints-build.txt
 ```
 
 > 💡 如果 Mac 没有 `brew`，先从 https://www.python.org/downloads/ 下载安装 Python 3，再执行上面的第 2、3 步。

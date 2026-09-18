@@ -8,7 +8,7 @@ import sys
 
 from flask import Flask, jsonify, render_template, send_file
 
-from smb_client import SMBClient, file_mime
+from smb_client import SMBClient, InvalidSharePath, file_mime, sanitize_share_path
 
 
 def resource_path(*parts):
@@ -95,10 +95,18 @@ def _serve_file(client, filename, as_attachment):
 
     filename 是相对共享根的路径，可能含子目录（如 20260918094501/xxx.jpg），
     所以用 <path:> 路由转换器。
+    预览与下载共用这条路径，也共用同一个路径校验函数：
+    穿越 / 绝对路径等一律 400，不依赖 SMB 服务端拒绝。
     PDF 与图片都是 inline 返回，这样子才能在内嵌 iframe / img 里预览；
     只有 download 走 attachment 触发另存。
     """
     try:
+        # 显式安全校验（预览/下载共用）：不合法直接 400
+        try:
+            filename = sanitize_share_path(filename)
+        except InvalidSharePath as exc:
+            return jsonify({"success": False, "error": "路径不合法: %s" % exc}), 400
+
         buf = client.retrieve_file(filename)
         return send_file(
             buf,

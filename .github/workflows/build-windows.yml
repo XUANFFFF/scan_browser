@@ -1,0 +1,111 @@
+# Windows 自动打包 —— 与 macOS 云端构建（build-macos.yml）对等的能力。
+#
+# 目标：v2.0 起两个平台的产物都从 CI 出，而不是一边自动、一边手工。
+# 与 macOS 版同样的约定：
+#   - 只 workflow_dispatch 手动触发，不接普通 push
+#   - 干净 venv + constraints-build.txt 钉版本（与本地 build_exe.sh 同一套约束）
+#   - 复用 build_exe.sh 的打包命令，不另起逻辑
+#   - 冒烟只探 GET / 与 GET /api/config（不碰 SMB，云端连不到内网）
+#   - 产物上传为 Actions Artifact + SHA256SUMS
+#
+# 产物（Artifact「扫描文件浏览器-Windows-x64」）：
+#   扫描文件浏览器.exe        公开版（读 config.json）
+#   扫描文件浏览器-MCF.exe    内部版（配置写死）
+#   SHA256SUMS.txt
+
+name: Build Windows
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read                # 最小权限
+
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: true      # 防误点：新触发的直接取消还在跑的旧 run
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash             # 统一用 bash，避免 PowerShell 的引号/编码差异
+    env:
+      # 中文输出在 CI 日志里不要乱码
+      PYTHONIOENCODING: utf-8
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+
+      - name: 安装 Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # 与 macOS 侧同一套约束：任何时候重跑，都拿已验证过的版本组合出包
+      - name: 创建虚拟环境并安装依赖
+        run: |
+          set -euo pipefail
+          python -m venv .buildenv-win
+          .buildenv-win/Scripts/python.exe -m pip install --upgrade pip
+          .buildenv-win/Scripts/python.exe -m pip install -r requirements.txt -c constraints-build.txt
+          .buildenv-win/Scripts/python.exe -m pip install pyinstaller -c constraints-build.txt
+          echo "--- 已安装 ---"
+          .buildenv-win/Scripts/python.exe -m pip list
+
+      # 先跑普通业务单元测试（不依赖真实共享），挂了就不用继续打包
+      - name: 运行单元测试
+        run: |
+          set -euo pipefail
+          .buildenv-win/Scripts/python.exe -m unittest discover -s tests -v
+
+      # 复用本地打包脚本（PYBIN 换成 CI 的 venv），不另起一套 pyinstaller 命令
+      - name: 打包两个 EXE（build_exe.sh）
+        run: |
+          set -euo pipefail
+          PYBIN="$(pwd)/.buildenv-win/Scripts/python.exe" bash build_exe.sh
+
+      # localhost API 探针：browser 模式启动，验证页面与 /api/config。
+      # 桌面窗口在无头 CI 上不稳定，且「服务起来了」已能证明 onefile
+      # 解压、模块导入、模板资源全部正常（macOS 侧同理）。
+      - name: 冒烟测试（localhost 探针）
+        run: |
+          set -euo pipefail
+          bash .github/scripts/smoke_windows.sh
+
+      - name: 生成 SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum "扫描文件浏览器.exe" "扫描文件浏览器-MCF.exe" > SHA256SUMS.txt
+          echo "--- 产物 ---"
+          ls -lh *.exe SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: 上传 Actions Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: 扫描文件浏览器-Windows-x64
+          path: |
+            dist/扫描文件浏览器.exe
+            dist/扫描文件浏览器-MCF.exe
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 写入 Job Summary
+        if: always()
+        run: |
+          {
+            echo "### Windows 构建（x64）"
+            echo ""
+            if [ -f dist/SHA256SUMS.txt ]; then
+              echo '```'
+              ls -lh dist/*.exe
+              cat dist/SHA256SUMS.txt
+              echo '```'
+            else
+              echo "构建未完成，未生成产物"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

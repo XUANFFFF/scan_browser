@@ -597,6 +597,10 @@ let _loading = false;
 let _files = [];
 // 以「相对共享根的完整路径」为键：子目录里的同名文件不会互相覆盖
 let _byPath = {};
+// 当前预览文件在共享里的完整 path（含子目录）。「另存为…」必须用它，
+// 不能从 viewerTitle 的文本反推 —— 标题显示的是 name（不含子目录），
+// 子目录文件会因此请求到错误的下载路径。
+let _viewerPath = null;
 
 // ── 工具 ──
 
@@ -805,6 +809,7 @@ function highlight(fn) {
 }
 
 function openViewer(f) {
+  _viewerPath = f.path;
   document.getElementById("viewerTitle").textContent = f.name;
   var body;
   if (f.type === "image") {
@@ -833,6 +838,7 @@ function closeViewer() {
   document.getElementById("viewer").hidden = true;
   // 清空内容，避免 PDF 还在后台加载
   document.getElementById("viewerBody").innerHTML = "";
+  _viewerPath = null;   // 别留着上一次的 path，关窗后再点「另存为…」不应有动作
   document.removeEventListener("keydown", onViewerKeydown);
 }
 
@@ -857,9 +863,11 @@ function doDownload(fn) {
   if (MODE === "desktop") {
     // 桌面模式下 window.open 会调起系统浏览器，这里改用 <a download>：
     // WebView2 会走原生下载流程，pywebview 弹出系统「另存为」对话框。
+    // download 属性只放 basename —— 浏览器会清洗路径分隔符，且服务端
+    // 的 Content-Disposition 也是 basename，保持两边一致。
     var a = document.createElement("a");
     a.href = downloadUrl(fn);
-    a.download = fn;
+    a.download = fn.split("/").pop();
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -873,8 +881,8 @@ function doDownload(fn) {
 document.getElementById("refreshBtn").addEventListener("click", refreshAll);
 document.getElementById("viewerClose").addEventListener("click", closeViewer);
 document.getElementById("viewerSaveAs").addEventListener("click", function() {
-  var title = document.getElementById("viewerTitle").textContent;
-  if (title) doDownload(title);
+  // 用预览时记下的完整 path（含子目录），不是标题文本
+  if (_viewerPath) doDownload(_viewerPath);
 });
 document.getElementById("viewer").addEventListener("click", function(e) {
   if (e.target === this) closeViewer();

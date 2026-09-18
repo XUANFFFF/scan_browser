@@ -1,0 +1,61 @@
+# 构建约束 —— 固定当前已验证成功的依赖版本组合
+#
+# 用法（开发用 requirements.txt 仍保持宽泛范围，构建时叠加本约束）：
+#
+#     pip install -r requirements.txt -c constraints-build.txt
+#     pip install pyinstaller -c constraints-build.txt
+#
+# 为什么需要它：requirements.txt 里是 flask>=3.0 这类宽泛范围，
+# 今天能出包的组合，明天重跑构建可能拉到新版本。桌面工具的打包行为
+# （PyInstaller hook、pywebview 平台层、PyObjC 接口）对上游版本敏感，
+# 出过包的组合必须钉住，升级要显式改这里并重新走完验证。
+#
+# 版本来源：2026-09-18 实际出包验证的组合 ——
+#   Windows  本地 venv（两个 EXE + 冒烟/关窗/双实例全部验证通过）
+#   macOS    Actions run 35319778556（arm64 闭环验证 + codesign + 探针全绿）
+#
+# ⚠️ 与 for-mac-build/constraints-build.txt 保持同步（那边是给 Mac 本地
+#    打包用的副本）。升级版本时两处一起改。
+
+# ── 直接依赖 ──
+flask==3.1.3
+pysmb==1.2.15
+pywebview==6.2.1
+pyinstaller==6.22.3
+
+# ── PyInstaller 与打包行为相关的传递依赖 ──
+# setuptools 影响 PyInstaller 的运行时钩子；hooks-contrib 决定能识别哪些库
+pyinstaller-hooks-contrib==2026.7
+macholib==1.16.4            # macOS onefile/bundle 组装
+altgraph==0.17.5
+setuptools==84.0.0
+packaging==26.3
+
+# ── Flask 的传递依赖 ──
+werkzeug==3.1.8
+jinja2==3.1.6
+markupsafe==3.0.3
+itsdangerous==2.2.0
+click==8.5.0
+blinker==1.9.0
+
+# ── pysmb / pywebview 的传递依赖 ──
+pyasn1==0.6.4
+bottle==0.13.4
+proxy_tools==0.1.0
+typing_extensions==4.16.0
+
+# ── macOS 专属：pywebview 的 Cocoa 层 ──
+# 用环境标记限定 darwin，Windows 构建带上这份约束也不会尝试安装
+pyobjc-core==12.2.2 ; sys_platform == "darwin"
+pyobjc-framework-Cocoa==12.2.2 ; sys_platform == "darwin"
+pyobjc-framework-Quartz==12.2.2 ; sys_platform == "darwin"
+pyobjc-framework-UniformTypeIdentifiers==12.2.2 ; sys_platform == "darwin"
+pyobjc-framework-WebKit==12.2.2 ; sys_platform == "darwin"
+pyobjc-framework-security==12.2.2 ; sys_platform == "darwin"
+
+# ── 如何升级 ──
+# 1. 改这里的版本号（根目录与 for-mac-build/ 两处）
+# 2. Windows：重建 venv → build_exe.sh → 冒烟（列表/预览/子目录另存为/关窗）
+# 3. macOS：Actions 手动跑 arm64 构建，确认闭环验证（含 codesign）全绿
+# 4. 两边都过再提交；只过一边不要发版
