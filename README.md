@@ -28,6 +28,7 @@
 - **在线预览**：PDF 与图片在窗口内直接查看，不弹新窗口
 - **一键下载**：走系统「另存为」对话框
 - **手动刷新**：实时获取最新扫描文件
+- **可开多个窗口**：重复双击会各自使用不同端口，互不影响，关掉其中一个不会影响其它
 - **完全离线**：不依赖任何公网资源（字体、CDN 全部去掉）
 
 ## 使用方法
@@ -110,6 +111,8 @@ scan_browser/
 ├── desktop.py              # pywebview 桌面壳
 ├── templates/
 │   └── index.html          # 前端界面
+├── 图标.png                 # 图标源图
+├── icon.ico                # Windows 图标（打包用）
 ├── config.json             # 本地配置（不提交 Git）
 ├── config.example.json     # 配置模板
 ├── requirements.txt        # Python 依赖
@@ -140,6 +143,7 @@ _build_env\Scripts\pyinstaller --onefile --windowed ^
   --add-data "templates;templates" ^
   --hidden-import webview.platforms.winforms ^
   --hidden-import webview.platforms.edgechromium ^
+  --icon icon.ico ^
   --name "扫描文件浏览器" --distpath ./dist app.py
 ```
 
@@ -148,10 +152,32 @@ _build_env\Scripts\pyinstaller --onefile --windowed ^
 >
 > macOS 版打包见 `for-mac-build/`。
 
+## 应用图标
+
+- `图标.png` —— 图标源图（1145×1151，带透明圆角）
+- `icon.ico` —— Windows 用，多尺寸（16/24/32/48/64/128/256），打包时用 `--icon icon.ico` 嵌入
+- `for-mac-build/icon.icns` —— macOS 用，由 `scan-browser-mac.spec` 的 `icon=` 引用
+
+换图标时把新的 `图标.png` 换成正方形（1024×1024 以上），再用 Pillow 重新生成即可：
+
+```bash
+pip install pillow
+python -c "from PIL import Image; im=Image.open('图标.png').convert('RGBA'); \
+im.save('icon.ico', format='ICO', sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)]); \
+im.save('for-mac-build/icon.icns', format='ICNS')"
+```
+
 ## 排障
 
 程序日志写在 EXE 同目录的 `扫描文件浏览器.log`（写不进去时落到 `%LOCALAPPDATA%\ScanBrowser\`）。
 窗口无控制台输出，出问题先看这个日志。
+
+**缓存目录**：桌面模式每次运行会在系统临时目录建一个 WebView2 缓存目录
+（`%TEMP%\ScanBrowser-<PID>-xxxx`），关窗后自动删除；若是被任务管理器强杀等异常退出，
+残留目录会在下次启动时按 PID 回收。**不要**给它设成固定复用目录 —— 实测复用会让
+WebView2 缓存越堆越大，关窗耗时从 1 秒恶化到 20~60 秒，且两个窗口共用同一目录会白屏。
+
+**开多个窗口**：重复双击会各用各的端口和缓存，互不影响。
 
 ## 许可
 

@@ -106,7 +106,7 @@ exe = EXE(
 app = BUNDLE(
     exe,
     name=f'{app_name}.app',
-    icon=None,              # 如需要图标，将 .icns 文件放此目录后改为 icon='app_icon.icns'
+    icon='icon.icns',       # 应用图标（由 图标.png 生成）
     bundle_identifier='com.scanbrowser.app',
     info_plist={
         'CFBundleName': app_name,

@@ -65,6 +65,27 @@ INTERNAL_SMB_SHARE = "扫描共享文件"        # 共享名（一般不用改�
 
 ---
 
+## 修改图标
+
+图标文件是 `icon.icns`，已经由源图 `图标.png` 生成好，spec 里通过 `icon='icon.icns'` 引用，
+**不用做任何事**即可生效。
+
+如果之后想换图标，在 Mac 上用系统自带工具重新生成即可：
+
+```bash
+# 1. 准备一个 1024x1024 的 PNG，命名为 icon-source.png
+# 2. 建 iconset 目录并生成各尺寸
+mkdir icon.iconset
+for s in 16 32 64 128 256 512; do
+  sips -z $s $s icon-source.png --out icon.iconset/icon_${s}x${s}.png
+  sips -z $((s*2)) $((s*2)) icon-source.png --out icon.iconset/icon_${s}x${s}@2x.png
+done
+# 3. 打包成 .icns
+iconutil -c icns icon.iconset -o icon.icns
+```
+
+---
+
 ## 分发给同事
 
 将以下 **两个文件** 一起发送：

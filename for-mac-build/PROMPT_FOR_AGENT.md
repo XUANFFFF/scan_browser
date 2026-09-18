@@ -18,6 +18,7 @@
 | `smb_client.py` | SMB 访问层（连接 / 列举 / 读取 / 健康检查） |
 | `desktop.py` | pywebview 桌面壳（开窗口 / 关窗口 / 收尾） |
 | `templates/index.html` | 前端页面 |
+| `icon.icns` | 应用图标（已由源图生成，spec 会引用） |
 | `scan-browser-mac.spec` | PyInstaller 打包配置文件 |
 | `requirements.txt` | Python 依赖清单 |
 | `启动.command` | macOS 双击启动脚本（备选，.app 打不开时用） |
@@ -53,6 +54,7 @@
 - `requirements.txt` — Python 依赖（flask / pysmb / pywebview）
 - `启动.command` — macOS 双击启动脚本
 - `templates/index.html` — 前端页面
+- `icon.icns` — 应用图标（spec 已引用，无需改动）
 
 ## 打包步骤
 
