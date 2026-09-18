@@ -9,6 +9,36 @@ from datetime import datetime
 from flask import Flask, render_template, send_file, jsonify
 from smb.SMBConnection import SMBConnection
 
+
+def _setup_console():
+    """Windows 控制台编码兜底。
+
+    中文版 Windows 控制台默认是 GBK(936)，直接 print 中文/符号（如 ⚠）
+    会抛 UnicodeEncodeError，导致程序刚启动就崩溃。
+    这里优先把控制台切到 UTF-8；失败则退回 errors="replace"，保证永不崩溃。
+    """
+    if sys.platform != "win32":
+        return
+    utf8_ok = False
+    try:
+        import ctypes
+        # 65001 = UTF-8 代码页
+        utf8_ok = bool(ctypes.windll.kernel32.SetConsoleOutputCP(65001))
+    except Exception:
+        utf8_ok = False
+    try:
+        if utf8_ok:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        else:
+            sys.stdout.reconfigure(errors="replace")
+            sys.stderr.reconfigure(errors="replace")
+    except Exception:
+        pass
+
+
+_setup_console()
+
 # PyInstaller 打包后模板路径适配
 _is_frozen = getattr(sys, "frozen", False)
 _base_dir = os.path.dirname(sys.executable) if _is_frozen else os.path.dirname(__file__)
@@ -56,12 +86,46 @@ def _smb_connect():
     return conn
 
 
-def _serve_pdf(filename, as_attachment):
+# ── 文件类型识别 ──
+# 扩展名 → MIME 类型：PDF + 浏览器可原生预览的图片（JPG/JPEG/PNG）
+_MIME_MAP = {
+    ".pdf": "application/pdf",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+}
+
+# 扩展名 → 类型分类：用于前端分组与徽标展示
+_TYPE_MAP = {
+    ".pdf": "pdf",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".png": "image",
+}
+
+
+def _file_ext(filename):
+    """取小写扩展名（含点），如 '.jpg'"""
+    return os.path.splitext(filename)[1].lower()
+
+
+def _file_mime(filename):
+    """按扩展名返回 MIME 类型，未知类型回退为二进制流"""
+    return _MIME_MAP.get(_file_ext(filename), "application/octet-stream")
+
+
+def _file_type(filename):
+    """按扩展名返回类型：'pdf' / 'image' / 'other'"""
+    return _TYPE_MAP.get(_file_ext(filename), "other")
+
+
+def _serve_file(filename, as_attachment):
+    """从 SMB 读取文件并返回，MIME 按扩展名自动识别（支持 PDF 与图片）"""
     conn = _smb_connect()
     buf = io.BytesIO()
     conn.retrieveFile(SMB_SHARE, f"/{filename}", buf)
     buf.seek(0)
-    return send_file(buf, mimetype="application/pdf",
+    return send_file(buf, mimetype=_file_mime(filename),
                      as_attachment=as_attachment,
                      download_name=filename if as_attachment else None)
 
@@ -100,12 +164,15 @@ def list_files():
         for e in entries:
             if e.filename in (".", "..") or e.isDirectory:
                 continue
+            ext = _file_ext(e.filename)
             files.append({
                 "name": e.filename,
                 "size": e.file_size,
                 "size_display": _format_size(e.file_size),
                 "date": _parse_date(e.filename),
                 "create_time": e.create_time,
+                "type": _file_type(e.filename),
+                "ext": ext.lstrip("."),
             })
         files.sort(key=lambda f: f["name"], reverse=True)
         return jsonify({"success": True, "files": files})
@@ -116,7 +183,7 @@ def list_files():
 @app.route("/api/download/<filename>")
 def download_file(filename):
     try:
-        return _serve_pdf(filename, as_attachment=True)
+        return _serve_file(filename, as_attachment=True)
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
@@ -124,7 +191,7 @@ def download_file(filename):
 @app.route("/api/preview/<filename>")
 def preview_file(filename):
     try:
-        return _serve_pdf(filename, as_attachment=False)
+        return _serve_file(filename, as_attachment=False)
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 

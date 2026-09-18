@@ -260,6 +260,25 @@
     font-size: 0.75rem;
   }
 
+  /* 文件类型徽标：图片 / PDF */
+  .type-badge {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 4px;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+  .type-badge.pdf {
+    background: oklch(0.93 0.035 25);
+    color: oklch(0.5 0.14 25);
+  }
+  .type-badge.image {
+    background: var(--accent-bg);
+    color: var(--accent);
+  }
+
   /* Today row treatment */
   .file-row.today { background: var(--today-bg); }
   .file-row.today:hover { background: oklch(0.91 0.05 95); }
@@ -400,10 +419,14 @@ function makeRow(f, showTime) {
   var cls = isToday(f.name) ? "file-row today" : "file-row";
   if (f.name === _lastPreviewed) cls += " previewed";
   var timeStr = showTime ? '<time>' + esc(extractTime(f.name)) + '</time>' : '';
+  // 文件类型徽标：图片 / PDF
+  var badge = f.type === "image"
+    ? '<span class="type-badge image">图片</span>'
+    : '<span class="type-badge pdf">PDF</span>';
   return '<div class="' + cls + '">' +
     '<div class="file-cell">' +
       '<span class="file-name">' + esc(f.name) + '</span>' +
-      '<span class="file-meta">' + timeStr + '<span class="size">' + esc(f.size_display) + '</span><span>' + esc(f.date) + '</span></span>' +
+      '<span class="file-meta">' + badge + timeStr + '<span class="size">' + esc(f.size_display) + '</span><span>' + esc(f.date) + '</span></span>' +
     '</div>' +
     '<div class="actions">' +
       '<button class="btn-action btn-preview" data-f="' + esc(f.name) + '">预览</button>' +
@@ -426,7 +449,8 @@ async function loadList() {
     var d = await r.json();
     if (!d.success) throw new Error(d.error);
 
-    var files = d.files.filter(function(f) { return f.name.endsWith(".pdf"); });
+    // 仅展示支持的类型：PDF 与图片（JPG/JPEG/PNG）
+    var files = d.files.filter(function(f) { return f.type === "pdf" || f.type === "image"; });
     var today = [], hist = [];
     files.forEach(function(f) {
       if (isToday(f.name)) today.push(f); else hist.push(f);
