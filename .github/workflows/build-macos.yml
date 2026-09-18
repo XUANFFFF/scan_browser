@@ -157,8 +157,11 @@ jobs:
             --expect-arch "${{ matrix.expect }}" \
             --summary-out "$RUNNER_TEMP/verify-summary.md"
 
-      # 打包成 zip。用 ditto 而不是 zip：ditto 能保住可执行位、
-      # 扩展属性和签名封条，普通 zip 会把 .app 弄坏。
+      # 打包 ZIP。这里**不能**直接用 `ditto -c -k` 压包：ditto 写 UTF-8
+      # 文件名时不设 ZIP 的 UTF-8 标志位，Finder 能猜对、终端 unzip 却解出乱码。
+      # 改用 make_macos_zip.py 自己写 zip：显式设标志位 + 保留可执行位，
+      # 顺带把逐条清单打进日志，在 run 页面就能确认包对不对。
+      # （ditto 仍用于复制 .app —— 它能保住元数据与签名封条。）
       - name: 打包 ZIP
         run: |
           set -euo pipefail
@@ -185,33 +188,14 @@ jobs:
             '需要连公司内网才看得到扫描文件。' \
             > "$STAGE/使用说明.txt"
 
-          ditto -c -k --sequesterRsrc --keepParent "$STAGE" "$NAME.zip"
+          echo "--- 打包 ZIP（下列清单同时用于人工核对）---"
+          .buildenv/bin/python "$GITHUB_WORKSPACE/.github/scripts/make_macos_zip.py" \
+            "$STAGE" "$NAME.zip"
 
           echo "--- 产物 ---"
           ls -lh "$NAME.zip"
           shasum -a 256 "$NAME.zip" | tee "$NAME.zip.sha256"
           du -sh "$STAGE/扫描文件浏览器.app"
-
-          # 把 ZIP 内容打进日志：这样在 run 页面就能直接确认
-          # 「包里到底有没有 .app、权限对不对」，不必先下载下来看。
-          #
-          # 这里用 Python 的 zipfile 而不是 `unzip -l`：macOS 自带的 BSD unzip
-          # 不认 zip 的 UTF-8 文件名标志，中文名会被显示成乱码，容易误判成包坏了。
-          echo "--- ZIP 内容（权限 / 大小 / 路径）---"
-          .buildenv/bin/python - "$NAME.zip" <<'PY'
-          import stat
-          import sys
-          import zipfile
-
-          with zipfile.ZipFile(sys.argv[1]) as z:
-              total = 0
-              for i in z.infolist():
-                  total += i.file_size
-                  mode = i.external_attr >> 16
-                  perm = stat.filemode(mode) if mode else "-"
-                  print("  %-11s %10d  %s" % (perm, i.file_size, i.filename))
-              print("  %d 个条目，解压后共 %.1f MB" % (len(z.infolist()), total / 1048576))
-          PY
 
       - name: 上传 Actions Artifact
         uses: actions/upload-artifact@v6
