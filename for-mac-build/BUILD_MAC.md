@@ -12,14 +12,23 @@
 # 1. 安装 Python 3（如已安装可跳过）
 brew install python3
 
-# 2. 安装打包工具和项目依赖
-pip3 install pyinstaller flask pysmb
+# 2. 建独立虚拟环境（强烈建议）
+cd /路径/到/for-mac-build/
+python3 -m venv .buildenv
+source .buildenv/bin/activate
+
+# 3. 安装打包工具和项目依赖
+pip install --upgrade pip
+pip install pyinstaller flask pysmb
 ```
 
-> 💡 如果 Mac 没有 `brew`，先从 https://www.python.org/downloads/ 下载安装 Python 3，然后：
-> ```bash
-> pip3 install pyinstaller flask pysmb
-> ```
+> 💡 如果 Mac 没有 `brew`，先从 https://www.python.org/downloads/ 下载安装 Python 3，再执行上面的第 2、3 步。
+>
+> ⚠️ **为什么不直接 `pip3 install`**：新版 macOS 的系统 Python 受 SIP 保护、Homebrew 的 Python
+> 标记为 externally-managed，直接安装常报权限错误或 `externally-managed-environment`；
+> 即使成功也会污染系统环境。用虚拟环境最省事。
+>
+> 虚拟环境 `.buildenv/` 只用于打包，**不要**放进交付给同事的文件夹。
 
 ---
 

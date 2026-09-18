@@ -4,8 +4,12 @@
 # 【内部版】IP 已硬编码，零配置，双击即用
 #
 # 使用方式（在 macOS 上执行）：
-#   pip3 install pyinstaller flask pysmb
+#   python3 -m venv .buildenv && source .buildenv/bin/activate
+#   pip install --upgrade pip && pip install pyinstaller flask pysmb
 #   pyinstaller scan-browser-mac.spec
+#
+# 说明：务必用虚拟环境，不要直接 pip3 install
+# （新版 macOS 系统 Python 受保护，直接安装常报权限错误）
 #
 # 生成文件：dist/扫描文件浏览器.app
 

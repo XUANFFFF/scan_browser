@@ -16,6 +16,7 @@
 | `requirements.txt` | Python 依赖清单 |
 | `启动.command` | macOS 双击启动脚本（备选） |
 | `templates/index.html` | 前端页面 |
+| `BUILD_MAC.md` | 人工打包说明（备选阅读） |
 | `PROMPT_FOR_AGENT.md` | ← 给 AI agent 的 prompt，下方可直接复制 |
 
 ---
@@ -53,11 +54,16 @@
 
 ### 2️⃣ 安装依赖
 
-```bash
-pip3 install pyinstaller flask pysmb
-```
+**务必用独立虚拟环境**，不要直接 `pip3 install`（新版 macOS 的系统 Python 受保护，
+直接安装常报 `externally-managed-environment` 或权限错误，也会污染系统环境）：
 
-权限不够就加 `--user`。
+```bash
+cd <本文件夹路径>
+python3 -m venv .buildenv
+source .buildenv/bin/activate
+pip install --upgrade pip
+pip install pyinstaller flask pysmb
+```
 
 ### 3️⃣ 执行打包
 
@@ -78,4 +84,5 @@ ls -lah dist/扫描文件浏览器.app
 - 将 `dist/扫描文件浏览器.app` 和 `启动.command` 放入同一文件夹
 - 告知我打包成功、文件大小
 - 提醒同事：首次打开 `.app` 需右键 →「打开」绕过 macOS 安全提示
+- 打包用的 `.buildenv/` 虚拟环境**不要**放进交付文件夹
 ```
