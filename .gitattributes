@@ -1,0 +1,4 @@
+# macOS/Linux 启动脚本必须保持 LF 换行，否则在 macOS 上会报
+# "bad interpreter: /bin/bash^M"，所以这里强制固定为 eol=lf
+*.command text eol=lf
+*.sh      text eol=lf

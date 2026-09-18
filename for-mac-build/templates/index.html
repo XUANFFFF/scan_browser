@@ -4,34 +4,44 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>扫描文件浏览器</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Spline+Sans:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<!-- 内联空图标：避免向服务端请求 /favicon.ico 产生 404 噪音 -->
+<link rel="icon" href="data:,">
 <style>
   *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
   :root {
-    /* Warm-tinted neutrals — like aged paper */
-    --surface-0: oklch(0.985 0.002 90);
-    --surface-1: oklch(0.975 0.003 90);
-    --surface-2: oklch(0.96 0.004 90);
-    --border: oklch(0.90 0.004 90);
-    --border-light: oklch(0.93 0.003 90);
+    /* ── 字体：只用系统字体，不依赖任何公网字体服务（离线优先）── */
+    --font-ui: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC",
+               -apple-system, BlinkMacSystemFont, "Hiragino Sans GB", sans-serif;
+    --font-mono: Consolas, "Cascadia Mono", Menlo, "DejaVu Sans Mono", monospace;
 
-    /* Text */
-    --text-primary: oklch(0.22 0.01 270);
-    --text-secondary: oklch(0.48 0.01 270);
-    --text-tertiary: oklch(0.65 0.005 270);
+    /* ── 颜色：先给 hex 兜底值，任何内核都能正常显示 ── */
+    --surface-0: #fbfbfa;
+    --surface-1: #f7f7f5;
+    --surface-2: #f1f1ee;
+    --border: #e3e3e0;
+    --border-light: #eaeae7;
 
-    /* Muted teal accent — like a classic office notebook */
-    --accent: oklch(0.55 0.12 215);
-    --accent-hover: oklch(0.48 0.12 215);
-    --accent-bg: oklch(0.92 0.025 215);
-    --accent-ring: oklch(0.55 0.12 215 / 0.25);
+    --text-primary: #22222a;
+    --text-secondary: #6c6c78;
+    --text-tertiary: #9c9ca6;
 
-    /* Today highlight — warm amber wash */
-    --today-bg: oklch(0.94 0.04 95);
-    --today-dot: oklch(0.58 0.12 95);
+    --accent: #0f7e9b;
+    --accent-hover: #0a6a84;
+    --accent-bg: #daedf3;
+    --accent-ring: rgba(15, 126, 155, 0.25);
+
+    --today-bg: #f6f0dc;
+    --today-bg-hover: #f0e8ce;
+    --today-dot: #b0892f;
+
+    --status-ok: #2e9e5b;
+    --status-warn: #c8871c;
+    --status-bad: #c0392b;
+
+    --badge-pdf-bg: #f8e4e1;
+    --badge-pdf-fg: #b23a2a;
+    --danger-fg: #b03020;
 
     /* Sizing */
     --radius-sm: 6px;
@@ -51,8 +61,40 @@
     --space-16: 64px;
   }
 
+  /* 支持 oklch 的内核用更精确的配色覆盖上面的兜底值 */
+  @supports (color: oklch(0.5 0.1 200)) {
+    :root {
+      --surface-0: oklch(0.985 0.002 90);
+      --surface-1: oklch(0.975 0.003 90);
+      --surface-2: oklch(0.96 0.004 90);
+      --border: oklch(0.90 0.004 90);
+      --border-light: oklch(0.93 0.003 90);
+
+      --text-primary: oklch(0.22 0.01 270);
+      --text-secondary: oklch(0.48 0.01 270);
+      --text-tertiary: oklch(0.65 0.005 270);
+
+      --accent: oklch(0.55 0.12 215);
+      --accent-hover: oklch(0.48 0.12 215);
+      --accent-bg: oklch(0.92 0.025 215);
+      --accent-ring: oklch(0.55 0.12 215 / 0.25);
+
+      --today-bg: oklch(0.94 0.04 95);
+      --today-bg-hover: oklch(0.91 0.05 95);
+      --today-dot: oklch(0.58 0.12 95);
+
+      --status-ok: oklch(0.55 0.15 140);
+      --status-warn: oklch(0.68 0.13 75);
+      --status-bad: oklch(0.55 0.18 25);
+
+      --badge-pdf-bg: oklch(0.93 0.035 25);
+      --badge-pdf-fg: oklch(0.5 0.14 25);
+      --danger-fg: oklch(0.45 0.17 25);
+    }
+  }
+
   body {
-    font-family: "Spline Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: var(--font-ui);
     background: var(--surface-0);
     color: var(--text-primary);
     min-height: 100vh;
@@ -86,7 +128,7 @@
     color: var(--text-primary);
   }
   .header-sub {
-    font-family: "Geist Mono", "Consolas", monospace;
+    font-family: var(--font-mono);
     font-size: 0.8125rem;
     font-weight: 400;
     color: var(--text-tertiary);
@@ -94,14 +136,35 @@
     display: flex;
     align-items: center;
     gap: var(--space-2);
+    flex-wrap: wrap;
   }
-  .header-sub::before {
-    content: "";
-    width: 6px;
-    height: 6px;
+
+  /* ── 真实的 SMB 连接状态（不再是静态 CSS 绿点） ── */
+  .status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    white-space: nowrap;
+  }
+  .status-dot {
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
-    background: oklch(0.55 0.15 140);
-    display: inline-block;
+    background: var(--text-tertiary);
+    flex-shrink: 0;
+  }
+  .status[data-state="connecting"] .status-dot {
+    background: var(--status-warn);
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  .status[data-state="ok"] .status-dot { background: var(--status-ok); }
+  .status[data-state="fail"] .status-dot { background: var(--status-bad); }
+  .status[data-state="fail"] .status-text { color: var(--status-bad); }
+  .sep { opacity: 0.5; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 0.3; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.5); }
   }
 
   .toolbar {
@@ -160,10 +223,6 @@
     animation: pulse 1.2s ease-in-out infinite;
     margin-right: var(--space-2);
   }
-  @keyframes pulse {
-    0%, 100% { opacity: 0.3; transform: scale(1); }
-    50% { opacity: 1; transform: scale(1.5); }
-  }
   .loading-text {
     font-size: 0.8125rem;
     color: var(--text-tertiary);
@@ -204,7 +263,7 @@
 
   /* ── Date group label ── */
   .date-group {
-    font-family: "Geist Mono", "Consolas", monospace;
+    font-family: var(--font-mono);
     font-size: 0.75rem;
     font-weight: 500;
     color: var(--text-tertiary);
@@ -233,7 +292,7 @@
     position: relative;
   }
   .file-row:hover { background: var(--surface-2); }
-  
+
   .file-cell { min-width: 0; display: flex; flex-direction: column; gap: var(--space-1); }
   .file-name {
     font-size: 1rem;
@@ -251,7 +310,7 @@
     flex-wrap: wrap;
   }
   .file-meta time {
-    font-family: "Geist Mono", "Consolas", monospace;
+    font-family: var(--font-mono);
     font-size: 0.75rem;
     color: var(--text-secondary);
     font-weight: 500;
@@ -271,8 +330,8 @@
     white-space: nowrap;
   }
   .type-badge.pdf {
-    background: oklch(0.93 0.035 25);
-    color: oklch(0.5 0.14 25);
+    background: var(--badge-pdf-bg);
+    color: var(--badge-pdf-fg);
   }
   .type-badge.image {
     background: var(--accent-bg);
@@ -281,7 +340,7 @@
 
   /* Today row treatment */
   .file-row.today { background: var(--today-bg); }
-  .file-row.today:hover { background: oklch(0.91 0.05 95); }
+  .file-row.today:hover { background: var(--today-bg-hover); }
 
   /* Active (just-clicked) row */
   .file-row.previewed .file-name { color: var(--accent); }
@@ -340,15 +399,113 @@
     color: var(--text-tertiary);
     opacity: 0.7;
   }
-  .footer time { font-family: "Geist Mono", "Consolas", monospace; }
+  .footer time { font-family: var(--font-mono); }
 
   /* ── Error ── */
   .error-box {
-    padding: var(--space-6);
+    padding: var(--space-8) var(--space-6);
     text-align: center;
-    color: oklch(0.45 0.17 25);
-    font-size: 0.9375rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-3);
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
   }
+  .error-title {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--danger-fg);
+  }
+  .error-msg {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    word-break: break-all;
+    max-width: 100%;
+  }
+  .error-hint {
+    font-size: 0.75rem;
+    color: var(--text-tertiary);
+  }
+
+  /* ── 内嵌预览（桌面模式）──
+     桌面模式下不能用 window.open：pywebview 会把它转成系统浏览器，
+     或直接在当前窗口导航、把文件列表顶掉。所以改成页面内的大图/PDF 视图。 */
+  .viewer {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    background: rgba(20, 20, 24, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-6);
+  }
+  .viewer[hidden] { display: none; }
+  .viewer-panel {
+    background: var(--surface-0);
+    border-radius: var(--radius-lg);
+    width: 100%;
+    max-width: 900px;
+    height: 100%;
+    max-height: 780px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+  }
+  .viewer-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-1);
+    flex-shrink: 0;
+  }
+  .viewer-title {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .viewer-tools { display: flex; gap: var(--space-1); flex-shrink: 0; }
+  .viewer-body {
+    flex: 1;
+    min-height: 0;
+    background: var(--surface-2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: auto;
+  }
+  .viewer-frame {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    display: block;
+  }
+  .viewer-img {
+    max-width: 100%;
+    max-height: 100%;
+    display: block;
+    object-fit: contain;
+  }
+  .viewer-hint {
+    padding: var(--space-2) var(--space-4);
+    font-size: 0.75rem;
+    color: var(--text-tertiary);
+    border-top: 1px solid var(--border);
+    background: var(--surface-1);
+    flex-shrink: 0;
+  }
+  .viewer-hint[hidden] { display: none; }
 
   /* ── Responsive ── */
   @media (max-width: 640px) {
@@ -357,6 +514,7 @@
     .toolbar { width: 100%; justify-content: space-between; }
     .file-row { grid-template-columns: 1fr; padding: var(--space-3); }
     .actions { opacity: 1; margin-top: var(--space-2); }
+    .viewer { padding: var(--space-2); }
   }
 </style>
 </head>
@@ -366,11 +524,17 @@
   <header class="header">
     <div>
       <h1 class="header-title">扫描文件</h1>
-      <div class="header-sub" id="headerPath">—</div>
+      <div class="header-sub">
+        <span class="status" id="status" data-state="connecting">
+          <span class="status-dot"></span><span class="status-text" id="statusText">正在连接</span>
+        </span>
+        <span class="sep">·</span>
+        <span id="headerPath">—</span>
+      </div>
     </div>
     <div class="toolbar">
       <span class="stat-label" id="stats">—</span>
-      <button class="btn-refresh" id="refreshBtn" onclick="loadList()">
+      <button class="btn-refresh" id="refreshBtn" type="button">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
         刷新
       </button>
@@ -388,10 +552,35 @@
   <footer class="footer" id="footer"></footer>
 </div>
 
+<!-- 内嵌预览：桌面模式用它替代新窗口/新标签页 -->
+<div class="viewer" id="viewer" hidden>
+  <div class="viewer-panel">
+    <div class="viewer-bar">
+      <span class="viewer-title" id="viewerTitle"></span>
+      <div class="viewer-tools">
+        <button class="btn-action btn-download" id="viewerSaveAs" type="button">另存为…</button>
+        <button class="btn-action btn-preview" id="viewerClose" type="button">关闭</button>
+      </div>
+    </div>
+    <div class="viewer-body" id="viewerBody"></div>
+    <div class="viewer-hint" id="viewerHint" hidden></div>
+  </div>
+</div>
+
 <script>
 const BASE = window.location.origin;
+
+// 运行模式由服务端通过 /api/config 告知：
+//   browser —— 传统浏览器模式，预览/下载沿用 window.open
+//   desktop —— pywebview 桌面壳，禁掉 window.open，改用内嵌预览 + <a download>
+let MODE = "browser";
+
 let _lastPreviewed = null;
 let _loading = false;
+let _files = [];
+let _byName = {};
+
+// ── 工具 ──
 
 function fmtSize(b) {
   if (b < 1024) return b + " B";
@@ -412,14 +601,27 @@ function isToday(fn) {
 
 function extractTime(fn) {
   var m = fn.match(/^\d{8}(\d{2})(\d{2})/);
-  return m ? m[1] + ":" + m[2] : null;
+  return m ? m[1] + ":" + m[2] : "";
 }
+
+function previewUrl(fn) { return BASE + "/api/preview/" + encodeURIComponent(fn); }
+function downloadUrl(fn) { return BASE + "/api/download/" + encodeURIComponent(fn); }
+
+// ── 状态灯 ──
+
+function setStatus(state, text) {
+  var el = document.getElementById("status");
+  el.setAttribute("data-state", state);
+  document.getElementById("statusText").textContent = text;
+}
+
+// ── 行渲染 ──
 
 function makeRow(f, showTime) {
   var cls = isToday(f.name) ? "file-row today" : "file-row";
   if (f.name === _lastPreviewed) cls += " previewed";
-  var timeStr = showTime ? '<time>' + esc(extractTime(f.name)) + '</time>' : '';
-  // 文件类型徽标：图片 / PDF
+  var time = showTime ? extractTime(f.name) : "";
+  var timeStr = time ? '<time>' + esc(time) + '</time>' : '';
   var badge = f.type === "image"
     ? '<span class="type-badge image">图片</span>'
     : '<span class="type-badge pdf">PDF</span>';
@@ -429,11 +631,83 @@ function makeRow(f, showTime) {
       '<span class="file-meta">' + badge + timeStr + '<span class="size">' + esc(f.size_display) + '</span><span>' + esc(f.date) + '</span></span>' +
     '</div>' +
     '<div class="actions">' +
-      '<button class="btn-action btn-preview" data-f="' + esc(f.name) + '">预览</button>' +
-      '<button class="btn-action btn-download" data-f="' + esc(f.name) + '">下载</button>' +
+      '<button class="btn-action btn-preview" type="button" data-f="' + esc(f.name) + '">预览</button>' +
+      '<button class="btn-action btn-download" type="button" data-f="' + esc(f.name) + '">下载</button>' +
     '</div>' +
   '</div>';
 }
+
+function renderList(files) {
+  var today = [], hist = [];
+  files.forEach(function(f) {
+    if (isToday(f.name)) today.push(f); else hist.push(f);
+  });
+  today.sort(function(a,b) { return b.name.localeCompare(a.name); });
+  hist.sort(function(a,b) { return b.name.localeCompare(a.name); });
+
+  var h = "";
+
+  h += '<div class="section"><div class="section-label"><span class="dot"></span> 今日扫描<span class="count">' + today.length + '</span></div>';
+  if (today.length === 0) {
+    h += '<div class="empty-note">暂无今日扫描文件</div>';
+  } else {
+    today.forEach(function(f) { h += makeRow(f, true); });
+  }
+  h += '</div>';
+
+  h += '<div class="section section-history"><div class="section-label"><span class="dot"></span> 历史记录<span class="count">' + hist.length + '</span></div>';
+  if (hist.length === 0) {
+    h += '<div class="empty-note">暂无历史扫描文件</div>';
+  } else {
+    var lastDate = "";
+    hist.forEach(function(f) {
+      var dk = f.name.substring(0,8);
+      if (dk !== lastDate) {
+        lastDate = dk;
+        h += '<div class="date-group">' + dk.substring(0,4) + '-' + dk.substring(4,6) + '-' + dk.substring(6,8) + '</div>';
+      }
+      h += makeRow(f, false);
+    });
+  }
+  h += '</div>';
+
+  var el = document.getElementById("listView");
+  el.innerHTML = h;
+
+  el.querySelectorAll(".btn-preview").forEach(function(b) {
+    b.addEventListener("click", function(e) {
+      e.stopPropagation();
+      doPreview(b.dataset.f);
+    });
+  });
+  el.querySelectorAll(".btn-download").forEach(function(b) {
+    b.addEventListener("click", function(e) {
+      e.stopPropagation();
+      doDownload(b.dataset.f);
+    });
+  });
+
+  var total = files.reduce(function(s,f) { return s + f.size; }, 0);
+  document.getElementById("stats").innerHTML = '<strong>' + files.length + '</strong> 个文件 &middot; ' + fmtSize(total);
+  document.getElementById("footer").innerHTML = '最后刷新 <time>' + new Date().toLocaleTimeString("zh-CN") + '</time>';
+  el.style.display = "";
+}
+
+function renderError(title, detail) {
+  var el = document.getElementById("listView");
+  el.innerHTML =
+    '<div class="error-box">' +
+      '<div class="error-title">' + esc(title) + '</div>' +
+      (detail ? '<div class="error-msg">' + esc(detail) + '</div>' : '') +
+      '<div class="error-hint">请确认网络已连接、扫描仪共享可访问，然后重试。</div>' +
+      '<button class="btn-action btn-preview" type="button" id="retryBtn">重新连接</button>' +
+    '</div>';
+  el.style.display = "";
+  var retry = document.getElementById("retryBtn");
+  if (retry) retry.addEventListener("click", refreshAll);
+}
+
+// ── 数据加载 ──
 
 async function loadList() {
   if (_loading) return;
@@ -450,66 +724,14 @@ async function loadList() {
     if (!d.success) throw new Error(d.error);
 
     // 仅展示支持的类型：PDF 与图片（JPG/JPEG/PNG）
-    var files = d.files.filter(function(f) { return f.type === "pdf" || f.type === "image"; });
-    var today = [], hist = [];
-    files.forEach(function(f) {
-      if (isToday(f.name)) today.push(f); else hist.push(f);
-    });
-    today.sort(function(a,b) { return b.name.localeCompare(a.name); });
-    hist.sort(function(a,b) { return b.name.localeCompare(a.name); });
+    _files = d.files.filter(function(f) { return f.type === "pdf" || f.type === "image"; });
+    _byName = {};
+    _files.forEach(function(f) { _byName[f.name] = f; });
 
-    var h = "";
-
-    // Today
-    h += '<div class="section"><div class="section-label"><span class="dot"></span> 今日扫描<span class="count">' + today.length + '</span></div>';
-    if (today.length === 0) {
-      h += '<div class="empty-note">暂无今日扫描文件</div>';
-    } else {
-      today.forEach(function(f) { h += makeRow(f, true); });
-    }
-    h += '</div>';
-
-    // History
-    h += '<div class="section section-history"><div class="section-label"><span class="dot"></span> 历史记录<span class="count">' + hist.length + '</span></div>';
-    if (hist.length === 0) {
-      h += '<div class="empty-note">暂无历史扫描文件</div>';
-    } else {
-      var lastDate = "";
-      hist.forEach(function(f) {
-        var dk = f.name.substring(0,8);
-        if (dk !== lastDate) {
-          lastDate = dk;
-          h += '<div class="date-group">' + dk.substring(0,4) + '-' + dk.substring(4,6) + '-' + dk.substring(6,8) + '</div>';
-        }
-        h += makeRow(f, false);
-      });
-    }
-    h += '</div>';
-
-    var el = document.getElementById("listView");
-    el.innerHTML = h;
-
-    // Bind events
-    el.querySelectorAll(".btn-preview").forEach(function(b) {
-      b.addEventListener("click", function(e) {
-        e.stopPropagation();
-        doPreview(b.dataset.f);
-      });
-    });
-    el.querySelectorAll(".btn-download").forEach(function(b) {
-      b.addEventListener("click", function(e) {
-        e.stopPropagation();
-        doDownload(b.dataset.f);
-      });
-    });
-
-    var total = files.reduce(function(s,f) { return s + f.size; }, 0);
-    document.getElementById("stats").innerHTML = '<strong>' + files.length + '</strong> 个文件 &middot; ' + fmtSize(total);
-    document.getElementById("footer").innerHTML = '最后刷新 <time>' + new Date().toLocaleTimeString("zh-CN") + '</time>';
-    el.style.display = "";
-  } catch(e) {
-    document.getElementById("listView").innerHTML = '<div class="error-box">' + esc(e.message) + '</div>';
-    document.getElementById("listView").style.display = "";
+    renderList(_files);
+  } catch (e) {
+    setStatus("fail", "无法连接");
+    renderError("读取文件列表失败", e.message);
   }
 
   document.getElementById("loadingView").style.display = "none";
@@ -517,29 +739,117 @@ async function loadList() {
   _loading = false;
 }
 
-function doPreview(fn) {
+// 先用 /api/health 探一次真实 SMB 状态，再拉列表
+async function refreshAll() {
+  if (_loading) return;
+  setStatus("connecting", "正在连接");
+
+  try {
+    var r = await fetch(BASE + "/api/health");
+    var h = await r.json();
+    if (!h.ok) {
+      setStatus("fail", "无法连接");
+      renderError("无法连接扫描共享", h.error || ("共享 " + h.share + " 不可达"));
+      return;
+    }
+    setStatus("ok", "已连接" + (h.latency_ms != null ? " · " + h.latency_ms + " ms" : ""));
+    await loadList();
+  } catch (e) {
+    setStatus("fail", "无法连接");
+    renderError("无法连接本地服务", e.message);
+  }
+}
+
+// ── 预览 ──
+
+function highlight(fn) {
   _lastPreviewed = fn;
-  // Refresh visual highlight
   document.querySelectorAll(".file-row").forEach(function(el) {
     var b = el.querySelector(".btn-preview");
-    el.classList.toggle("previewed", b && b.dataset.f === fn);
+    el.classList.toggle("previewed", !!(b && b.dataset.f === fn));
   });
-  window.open(BASE + "/api/preview/" + encodeURIComponent(fn), "_blank");
 }
+
+function openViewer(f) {
+  document.getElementById("viewerTitle").textContent = f.name;
+  document.getElementById("viewerBody").innerHTML = f.type === "image"
+    ? '<img class="viewer-img" alt="' + esc(f.name) + '" src="' + previewUrl(f.name) + '">'
+    : '<iframe class="viewer-frame" title="' + esc(f.name) + '" src="' + previewUrl(f.name) + '"></iframe>';
+
+  var hint = document.getElementById("viewerHint");
+  if (f.type === "pdf") {
+    hint.textContent = "若 PDF 显示空白，请点「另存为…」保存后用系统阅读器打开。";
+    hint.hidden = false;
+  } else {
+    hint.hidden = true;
+  }
+
+  document.getElementById("viewer").hidden = false;
+  document.addEventListener("keydown", onViewerKeydown);
+}
+
+function closeViewer() {
+  document.getElementById("viewer").hidden = true;
+  // 清空内容，避免 PDF 还在后台加载
+  document.getElementById("viewerBody").innerHTML = "";
+  document.removeEventListener("keydown", onViewerKeydown);
+}
+
+function onViewerKeydown(e) {
+  if (e.key === "Escape") closeViewer();
+}
+
+function doPreview(fn) {
+  var f = _byName[fn];
+  if (!f) return;
+  highlight(fn);
+  if (MODE === "desktop") {
+    openViewer(f);
+  } else {
+    window.open(previewUrl(fn), "_blank");
+  }
+}
+
+// ── 下载 ──
 
 function doDownload(fn) {
-  window.open(BASE + "/api/download/" + encodeURIComponent(fn));
+  if (MODE === "desktop") {
+    // 桌面模式下 window.open 会调起系统浏览器，这里改用 <a download>：
+    // WebView2 会走原生下载流程，pywebview 弹出系统「另存为」对话框。
+    var a = document.createElement("a");
+    a.href = downloadUrl(fn);
+    a.download = fn;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  } else {
+    window.open(downloadUrl(fn));
+  }
 }
 
-// Load server config (path display)
-fetch(BASE + "/api/config")
-  .then(function(r) { return r.json(); })
-  .then(function(cfg) {
-    document.getElementById("headerPath").textContent = cfg.smb_host + " / " + cfg.smb_share;
-  });
+// ── 启动 ──
 
-// Initial load
-loadList();
+document.getElementById("refreshBtn").addEventListener("click", refreshAll);
+document.getElementById("viewerClose").addEventListener("click", closeViewer);
+document.getElementById("viewerSaveAs").addEventListener("click", function() {
+  var title = document.getElementById("viewerTitle").textContent;
+  if (title) doDownload(title);
+});
+document.getElementById("viewer").addEventListener("click", function(e) {
+  if (e.target === this) closeViewer();
+});
+
+(async function boot() {
+  try {
+    var r = await fetch(BASE + "/api/config");
+    var cfg = await r.json();
+    MODE = cfg.mode || "browser";
+    document.getElementById("headerPath").textContent = cfg.smb_host + " / " + cfg.smb_share;
+  } catch (e) {
+    // 拿不到配置不影响主流程，继续按浏览器模式跑
+  }
+  refreshAll();
+})();
 </script>
 </body>
 </html>

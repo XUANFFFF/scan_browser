@@ -2,7 +2,7 @@
 dist/
 _build_env/
 .buildenv/
-build/
+build*/
 *.spec
 # 例外：macOS 打包分发包 for-mac-build/ 内的 spec 是交付物，必须入库
 !for-mac-build/*.spec
@@ -11,6 +11,9 @@ build/
 __pycache__/
 *.pyc
 *.pyo
+
+# 运行 / 打包日志（每次运行都会重新生成，不入库）
+*.log
 
 # 本地配置文件（含实际 IP，不提交）
 config.json

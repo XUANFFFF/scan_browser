@@ -33,7 +33,7 @@ fi
 if [ -n "$PY_CMD" ]; then
     # 依赖不齐时，在独立虚拟环境里安装，避免污染系统 Python
     # （新版 macOS 的系统 Python 受保护，直接 pip3 install 常报权限错误）
-    if ! "$PY_CMD" -c "import flask, smb" > /dev/null 2>&1; then
+    if ! "$PY_CMD" -c "import flask, smb, webview" > /dev/null 2>&1; then
         echo "依赖未就绪，正在创建虚拟环境并安装（仅首次，约需 1 分钟）..."
         if [ ! -x "$SCRIPT_DIR/.buildenv/bin/python" ]; then
             python3 -m venv "$SCRIPT_DIR/.buildenv" || {
@@ -52,10 +52,10 @@ if [ -n "$PY_CMD" ]; then
         echo "依赖安装完成"
     fi
 
-    echo "正在启动（Python 源码）..."
-    echo "浏览器会自动打开；关闭本窗口即停止服务。"
+    echo "正在启动（Python 源码，独立桌面窗口）..."
+    echo "关闭窗口即停止服务。"
     echo ""
-    "$PY_CMD" "$SCRIPT_DIR/app_internal.py"
+    "$PY_CMD" "$SCRIPT_DIR/app_internal.py" --desktop
     exit 0
 fi
 

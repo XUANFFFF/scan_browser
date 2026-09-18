@@ -1,6 +1,7 @@
 # macOS 版打包指南
 
-> 内部版，IP 已硬编码在 `app_internal.py`，零配置双击即用。
+> 内部版，IP 已硬编码在 `launcher.py`，零配置双击即用。
+> 打包后是一个**独立桌面窗口**（不依赖浏览器）。
 
 ---
 
@@ -19,7 +20,7 @@ source .buildenv/bin/activate
 
 # 3. 安装打包工具和项目依赖
 pip install --upgrade pip
-pip install pyinstaller flask pysmb
+pip install -r requirements.txt pyinstaller
 ```
 
 > 💡 如果 Mac 没有 `brew`，先从 https://www.python.org/downloads/ 下载安装 Python 3，再执行上面的第 2、3 步。
@@ -29,6 +30,9 @@ pip install pyinstaller flask pysmb
 > 即使成功也会污染系统环境。用虚拟环境最省事。
 >
 > 虚拟环境 `.buildenv/` 只用于打包，**不要**放进交付给同事的文件夹。
+
+> ℹ️ `pywebview` 在 macOS 上会自动带上 `pyobjc-*` 系列依赖（系统 WebKit 的 Python 绑定），
+> 由 `requirements.txt` 里的 `pywebview>=6.0` 自动拉取，不用单独装。
 
 ---
 
@@ -48,10 +52,11 @@ pyinstaller scan-browser-mac.spec
 
 ## 修改 IP
 
-如果你们的 SMB 服务器 IP 不是 `192.168.1.115`，打包前先修改 `app_internal.py` 中的 `SMB_HOST` 变量：
+如果你们的 SMB 服务器 IP 不是 `192.168.1.115`，打包前先修改 `launcher.py` 顶部的常量：
 
 ```python
-SMB_HOST = '你的IP'   # 修改这里
+INTERNAL_SMB_HOST = "192.168.1.115"      # 改这里
+INTERNAL_SMB_SHARE = "扫描共享文件"        # 共享名（一般不用改）
 ```
 
 改完再执行打包。
@@ -66,15 +71,29 @@ SMB_HOST = '你的IP'   # 修改这里
 
 ```
 📁 扫描文件浏览器/
-   ├── 扫描文件浏览器.app     ← 双击即可运行
-   └── 启动.command           ← 备用启动脚本
+   ├── 扫描文件浏览器.app     ← 双击即可运行，打开独立窗口
+   └── 启动.command           ← 备用启动脚本（.app 打不开时用）
 ```
 
 同事收到后：
 1. 将两个文件放在**同一个文件夹**
 2. 双击 `扫描文件浏览器.app`
 3. 第一次运行需右键 →「打开」（macOS 安全提示，仅首次）
-4. 浏览器自动弹出文件列表 ✔
+4. 直接弹出「扫描文件浏览器」独立窗口 ✔
 
 > ⚠️ **安全提示**：macOS 可能会提示"无法验证开发者"。
 > 右键点击 `.app` → 选择「打开」→ 点击「打开」即可。以后双击就能正常打开。
+
+---
+
+## 排障
+
+- 窗口起不来时，用命令行走一次可以看到日志：
+  ```bash
+  dist/扫描文件浏览器.app/Contents/MacOS/扫描文件浏览器
+  ```
+- 运行日志写在 `.app` 同级的 `扫描文件浏览器.log`（写不进去时落到用户目录）。
+- 想临时回退到浏览器模式（不开窗口）：
+  ```bash
+  dist/扫描文件浏览器.app/Contents/MacOS/扫描文件浏览器 --browser
+  ```

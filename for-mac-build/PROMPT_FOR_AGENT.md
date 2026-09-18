@@ -4,6 +4,7 @@
 > 让同事直接丢给 AI agent（如 WorkBuddy）就能自动完成打包。
 >
 > **此包为内部版，IP 已硬编码，零配置，双击即用。**
+> 打包后是一个**独立桌面窗口**（pywebview + 系统 WKWebView），不依赖浏览器。
 
 ---
 
@@ -11,11 +12,15 @@
 
 | 文件 | 用途 |
 |---|---|
-| `app_internal.py` | 内部版主程序（IP 已硬编码，零配置） |
+| `app_internal.py` | 内部版入口（只负责指定用哪套配置） |
+| `launcher.py` | 启动编排：日志 / 崩溃兜底 / 参数 / 模式分派（IP 硬编码在这里） |
+| `webapp.py` | Flask 应用工厂（所有 HTTP 路由） |
+| `smb_client.py` | SMB 访问层（连接 / 列举 / 读取 / 健康检查） |
+| `desktop.py` | pywebview 桌面壳（开窗口 / 关窗口 / 收尾） |
+| `templates/index.html` | 前端页面 |
 | `scan-browser-mac.spec` | PyInstaller 打包配置文件 |
 | `requirements.txt` | Python 依赖清单 |
-| `启动.command` | macOS 双击启动脚本（备选） |
-| `templates/index.html` | 前端页面 |
+| `启动.command` | macOS 双击启动脚本（备选，.app 打不开时用） |
 | `BUILD_MAC.md` | 人工打包说明（备选阅读） |
 | `PROMPT_FOR_AGENT.md` | ← 给 AI agent 的 prompt，下方可直接复制 |
 
@@ -33,14 +38,19 @@
 
 ## 项目背景
 
-办公室打印机（富士施乐 Apeos C5571）通过 SMBv1 协议把扫描文件存到局域网共享。
-此工具用 Python 的 `pysmb` 库直连共享，提供浏览器界面浏览和下载扫描文件（PDF / 图片）。
-已有一个 Windows 版 .exe，现在需要 macOS 版。
+办公室打印机（富士施乐 Apeos C5571）通过 SMB 协议把扫描文件存到局域网共享。
+此工具用 Python 的 `pysmb` 库直连共享，提供一个**独立桌面窗口**浏览和下载扫描文件
+（PDF / 图片）。窗口用 `pywebview` 实现，macOS 上走系统自带的 WKWebView，
+不需要安装浏览器，也不需要用户手动访问 127.0.0.1。已有一个 Windows 版 .exe，现在需要 macOS 版。
 
 当前目录已包含所有需要的源文件：
-- `app_internal.py` — Flask 后端（内部版，硬编码配置）
+- `app_internal.py` — 内部版入口
+- `launcher.py` — 启动编排（内部版 SMB 地址硬编码在 INTERNAL_SMB_HOST）
+- `webapp.py` — Flask 应用工厂（路由）
+- `smb_client.py` — SMB 访问层
+- `desktop.py` — pywebview 桌面壳
 - `scan-browser-mac.spec` — PyInstaller 打包配置（已固化为内部版）
-- `requirements.txt` — Python 依赖
+- `requirements.txt` — Python 依赖（flask / pysmb / pywebview）
 - `启动.command` — macOS 双击启动脚本
 - `templates/index.html` — 前端页面
 
@@ -50,7 +60,7 @@
 
 先问我：**你们办公室的 SMB 服务器 IP 是多少？**
 - 如果 IP 是 `192.168.1.115` → 不用改代码，直接进行下一步
-- 如果 IP 不同 → 我告诉你正确 IP，你修改 `app_internal.py` 中的 `SMB_HOST` 变量
+- 如果 IP 不同 → 我告诉你正确 IP，你修改 `launcher.py` 中的 `INTERNAL_SMB_HOST` 常量
 
 ### 2️⃣ 安装依赖
 
@@ -62,7 +72,7 @@ cd <本文件夹路径>
 python3 -m venv .buildenv
 source .buildenv/bin/activate
 pip install --upgrade pip
-pip install pyinstaller flask pysmb
+pip install -r requirements.txt pyinstaller
 ```
 
 ### 3️⃣ 执行打包
@@ -75,9 +85,12 @@ pyinstaller scan-browser-mac.spec
 
 ```bash
 ls -lah dist/扫描文件浏览器.app
+# 直接跑一次，确认会弹出独立桌面窗口（不是浏览器）
+dist/扫描文件浏览器.app/Contents/MacOS/扫描文件浏览器
 ```
 
-确认文件约 20~40 MB。
+确认 .app 存在（约 30~60 MB），并且双击/命令行启动后**弹出的是应用自己的窗口**，
+窗口标题为「扫描文件浏览器」。
 
 ## 交付
 

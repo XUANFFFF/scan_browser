@@ -1,17 +1,21 @@
 # -*- mode: python ; coding: utf-8 -*-
 #
 # 扫描文件浏览器 - macOS PyInstaller 打包配置
-# 【内部版】IP 已硬编码，零配置，双击即用
+# 【内部版】IP 已硬编码在 launcher.py，零配置，双击即用
 #
 # 使用方式（在 macOS 上执行）：
 #   python3 -m venv .buildenv && source .buildenv/bin/activate
-#   pip install --upgrade pip && pip install pyinstaller flask pysmb
+#   pip install --upgrade pip && pip install -r requirements.txt pyinstaller
 #   pyinstaller scan-browser-mac.spec
 #
 # 说明：务必用虚拟环境，不要直接 pip3 install
 # （新版 macOS 系统 Python 受保护，直接安装常报权限错误）
 #
 # 生成文件：dist/扫描文件浏览器.app
+#
+# 打包后默认以「独立桌面窗口」（pywebview + 系统 WKWebView）打开，
+# 不依赖浏览器；如需回退到浏览器模式，运行
+#   dist/扫描文件浏览器.app/Contents/MacOS/扫描文件浏览器 --browser
 
 block_cipher = None
 entry_point = 'app_internal.py'
@@ -30,6 +34,21 @@ a = Analysis(
         'flask.templating',
         'flask.cli',
         'werkzeug',
+        'werkzeug.serving',
+        # pywebview：平台后端是靠 guilib 里的 import 动态选中的，
+        # 显式声明才不会在打包后丢失
+        'webview',
+        'webview.guilib',
+        'webview.http',
+        'webview.util',
+        'webview.platforms.cocoa',
+        # cocoa 后端直接依赖的 PyObjC 框架
+        'objc',
+        'Foundation',
+        'AppKit',
+        'WebKit',
+        'PyObjCTools',
+        'bottle',
     ],
     hookspath=[],
     hooksconfig={},
@@ -72,7 +91,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,              # macOS 上不用 UPX（体积收益小，且可能触发签名问题）
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,          # macOS: True=显示终端, False=隐藏终端(GUI模式)
@@ -92,8 +111,8 @@ app = BUNDLE(
     info_plist={
         'CFBundleName': app_name,
         'CFBundleDisplayName': app_name,
-        'CFBundleVersion': '1.1',
-        'CFBundleShortVersionString': '1.1',
+        'CFBundleVersion': '2.0',
+        'CFBundleShortVersionString': '2.0',
         'CFBundleDevelopmentRegion': 'zh_CN',
         'NSHighResolutionCapable': True,
         'NSHumanReadableCopyright': 'Copyright © 2024',
