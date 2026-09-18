@@ -77,11 +77,11 @@ def create_app(config, mode="browser"):
         except Exception as exc:
             return jsonify({"success": False, "error": _error_text(exc)})
 
-    @app.route("/api/download/<filename>")
+    @app.route("/api/download/<path:filename>")
     def api_download(filename):
         return _serve_file(client, filename, as_attachment=True)
 
-    @app.route("/api/preview/<filename>")
+    @app.route("/api/preview/<path:filename>")
     def api_preview(filename):
         return _serve_file(client, filename, as_attachment=False)
 
@@ -91,6 +91,8 @@ def create_app(config, mode="browser"):
 def _serve_file(client, filename, as_attachment):
     """从 SMB 读文件并按扩展名给出正确的 MIME。
 
+    filename 是相对共享根的路径，可能含子目录（如 20260918094501/xxx.jpg），
+    所以用 <path:> 路由转换器。
     PDF 与图片都是 inline 返回，这样子才能在内嵌 iframe / img 里预览；
     只有 download 走 attachment 触发另存。
     """
@@ -100,7 +102,8 @@ def _serve_file(client, filename, as_attachment):
             buf,
             mimetype=file_mime(filename),
             as_attachment=as_attachment,
-            download_name=filename if as_attachment else None,
+            # 另存时只取文件名部分，避免把子目录也塞进下载文件名
+            download_name=os.path.basename(filename) if as_attachment else None,
         )
     except Exception as exc:
         return jsonify({"success": False, "error": _error_text(exc)}), 500

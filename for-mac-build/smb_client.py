@@ -8,6 +8,7 @@ Web 层只负责请求/响应，桌面壳只负责窗口生命周期，两边都
 """
 import io
 import os
+import re
 import time
 from datetime import datetime
 
@@ -16,21 +17,36 @@ from smb.SMBConnection import SMBConnection
 # 连接复用窗口（秒）：30 秒内的连续请求复用同一条 SMB 连接，避免每次都重新握手
 SMB_CONN_TTL = 30
 
+# 列举子目录的最大深度（根目录算第 0 层）。
+# 扫描仪会把一次扫描的成品放进 YYYYMMDDHHMMSS/ 子目录，所以必须下钻；
+# 但设个上限，防止共享被塞进深层目录时无限递归、每层都发一次 listPath。
+MAX_DEPTH = 3
+
+# 列举时要跳过的噪音文件（缩略图缓存 / 系统标记 / macOS 垃圾文件）
+SKIP_FILES = {"Thumbs.db", "desktop.ini", "ehthumbs.db", ".DS_Store"}
+
 # ── 文件类型识别 ──
-# 扩展名 → MIME：PDF + 浏览器/WebView 可原生预览的图片（JPG/JPEG/PNG）
+# 扩展名 → MIME：PDF + 可内联预览的图片（JPG/JPEG/PNG）+ TIFF（可下载，浏览器不内联）
 MIME_MAP = {
     ".pdf": "application/pdf",
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".png": "image/png",
+    ".tif": "image/tiff",
+    ".tiff": "image/tiff",
 }
 
-# 扩展名 → 分类：前端用它决定分组与徽标
+# 扩展名 → 分类：前端用它决定分组、徽标与「能否内联预览」
+#   pdf   —— 内嵌 iframe 预览
+#   image —— 内嵌 <img> 预览
+#   tiff  —— 列表展示 + 下载，但无法内联预览（浏览器/WebView 不支持 TIFF）
 TYPE_MAP = {
     ".pdf": "pdf",
     ".jpg": "image",
     ".jpeg": "image",
     ".png": "image",
+    ".tif": "tiff",
+    ".tiff": "tiff",
 }
 
 
@@ -59,17 +75,20 @@ def format_size(size_bytes):
 
 
 def parse_date(filename):
-    """从 14 位时间戳文件名中解析出时间，解析不出就返回 '—'。
+    """从文件名前缀的时间戳解析出时间，解析不出就返回 '—'。
 
-    有些扫描仪会把文件命名为 20260918100415.pdf，这里尽量榨出时间信息；
-    命名规则不同的（例如中文描述名）就显示 '—'，不猜。
+    扫描仪有两种命名，都要能认出来：
+      1. 纯 14 位时间戳：      20260917154658.pdf
+      2. 时间戳-序号（子目录）：20260918094501-0001.jpg
+    命名规则完全不同的（例如中文描述名）就显示 '—'，不猜。
     """
-    try:
-        stem = filename.rsplit(".", 1)[0]
-        if len(stem) == 14 and stem.isdigit():
-            return datetime.strptime(stem, "%Y%m%d%H%M%S").strftime("%Y-%m-%d %H:%M:%S")
-    except (ValueError, IndexError):
-        pass
+    stem = filename.rsplit(".", 1)[0]
+    m = re.match(r"^(\d{14})", stem)
+    if m:
+        try:
+            return datetime.strptime(m.group(1), "%Y%m%d%H%M%S").strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            pass
     return "—"
 
 
@@ -143,30 +162,63 @@ class SMBClient(object):
     # ── 业务 ──
 
     def list_files(self):
-        """列出共享根目录下的所有文件（跳过后台目录项与子目录）。"""
+        """递归列出共享下的所有文件（含子目录）。
+
+        扫描仪有两种落盘方式：
+          - 直接落在根目录，命名 YYYYMMDDHHMMSS.pdf
+          - 放进 YYYYMMDDHHMMSS/ 子目录，命名 YYYYMMDDHHMMSS-000N.jpg（图片类常见）
+        只列根目录会整批漏掉后者，所以这里下钻子目录；每条记录带 path（相对共享根），
+        供前端做预览/下载的唯一标识。
+        """
         conn = self.connect()
         files = []
-        for entry in conn.listPath(self.config.share, "/"):
-            if entry.filename in (".", "..") or entry.isDirectory:
-                continue
-            ext = file_ext(entry.filename)
-            files.append({
-                "name": entry.filename,
-                "size": entry.file_size,
-                "size_display": format_size(entry.file_size),
-                "date": parse_date(entry.filename),
-                "create_time": entry.create_time,
-                "type": file_type(entry.filename),
-                "ext": ext.lstrip("."),
-            })
+        self._walk(conn, "", 0, files)
         files.sort(key=lambda f: f["name"], reverse=True)
         return files
 
-    def retrieve_file(self, filename):
-        """把共享里的文件读进内存，返回 seek 到开头的 BytesIO。"""
+    def _walk(self, conn, subdir, depth, out):
+        """递归收集 subdir（相对共享根，根目录为 ""）下的文件。"""
+        if depth > MAX_DEPTH:
+            return
+        share_path = "/" + subdir.rstrip("/")   # "/" 或 "/20260918094501"
+        try:
+            entries = conn.listPath(self.config.share, share_path)
+        except Exception:
+            # 某个子目录读不到（权限 / 被占用）不应拖垮整份列表
+            return
+        for entry in entries:
+            name = entry.filename
+            if name in (".", ".."):
+                continue
+            if entry.isDirectory:
+                # 跳过隐藏 / 系统目录（.Trashes、$RECYCLE.BIN 等）
+                if name.startswith((".", "$")):
+                    continue
+                self._walk(conn, subdir + name + "/", depth + 1, out)
+                continue
+            # 跳过噪音文件与 macOS 资源分叉文件（._xxx）
+            if name in SKIP_FILES or name.startswith("._"):
+                continue
+            out.append({
+                "name": name,
+                "path": subdir + name,          # 相对共享根的路径（可能含子目录）
+                "dir": subdir.rstrip("/"),      # 所在子目录，根目录为空串
+                "size": entry.file_size,
+                "size_display": format_size(entry.file_size),
+                "date": parse_date(name),
+                "create_time": entry.create_time,
+                "type": file_type(name),
+                "ext": file_ext(name).lstrip("."),
+            })
+
+    def retrieve_file(self, relpath):
+        """把共享里的文件读进内存，返回 seek 到开头的 BytesIO。
+
+        relpath 是相对共享根的路径，可能含子目录（如 20260918094501/xxx.jpg）。
+        """
         conn = self.connect()
         buf = io.BytesIO()
-        conn.retrieveFile(self.config.share, "/" + filename, buf)
+        conn.retrieveFile(self.config.share, "/" + relpath, buf)
         buf.seek(0)
         return buf
 

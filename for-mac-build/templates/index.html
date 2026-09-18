@@ -337,6 +337,18 @@
     background: var(--accent-bg);
     color: var(--accent);
   }
+  .type-badge.tiff {
+    background: var(--today-bg);
+    color: var(--today-dot);
+  }
+  /* 来自子目录的文件：标出所在文件夹，避免与根目录文件混淆 */
+  .folder-hint {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    color: var(--text-tertiary);
+    opacity: 0.9;
+    word-break: break-all;
+  }
 
   /* Today row treatment */
   .file-row.today { background: var(--today-bg); }
@@ -578,7 +590,8 @@ let MODE = "browser";
 let _lastPreviewed = null;
 let _loading = false;
 let _files = [];
-let _byName = {};
+// 以「相对共享根的完整路径」为键：子目录里的同名文件不会互相覆盖
+let _byPath = {};
 
 // ── 工具 ──
 
@@ -604,8 +617,11 @@ function extractTime(fn) {
   return m ? m[1] + ":" + m[2] : "";
 }
 
-function previewUrl(fn) { return BASE + "/api/preview/" + encodeURIComponent(fn); }
-function downloadUrl(fn) { return BASE + "/api/download/" + encodeURIComponent(fn); }
+// 路径分段编码：保留 "/" 作为分隔符，只转义各段
+// （若整串 encodeURIComponent，"/" 会变成 %2F，部分服务端会误当成路径分隔而匹配失败）
+function encPath(p) { return String(p).split("/").map(encodeURIComponent).join("/"); }
+function previewUrl(p) { return BASE + "/api/preview/" + encPath(p); }
+function downloadUrl(p) { return BASE + "/api/download/" + encPath(p); }
 
 // ── 状态灯 ──
 
@@ -617,22 +633,31 @@ function setStatus(state, text) {
 
 // ── 行渲染 ──
 
+function badgeHtml(type) {
+  if (type === "image") return '<span class="type-badge image">图片</span>';
+  if (type === "tiff")  return '<span class="type-badge tiff">TIFF</span>';
+  return '<span class="type-badge pdf">PDF</span>';
+}
+
 function makeRow(f, showTime) {
   var cls = isToday(f.name) ? "file-row today" : "file-row";
-  if (f.name === _lastPreviewed) cls += " previewed";
+  if (f.path === _lastPreviewed) cls += " previewed";
   var time = showTime ? extractTime(f.name) : "";
   var timeStr = time ? '<time>' + esc(time) + '</time>' : '';
-  var badge = f.type === "image"
-    ? '<span class="type-badge image">图片</span>'
-    : '<span class="type-badge pdf">PDF</span>';
+  // 来自子目录的文件标出文件夹名，避免与根目录文件混淆
+  var dirHint = f.dir ? '<span class="folder-hint">' + esc(f.dir) + '/</span>' : '';
+  // TIFF 无法内联预览 → 不给「预览」按钮，只保留下载
+  var previewBtn = f.type === "tiff"
+    ? ''
+    : '<button class="btn-action btn-preview" type="button" data-f="' + esc(f.path) + '">预览</button>';
   return '<div class="' + cls + '">' +
     '<div class="file-cell">' +
       '<span class="file-name">' + esc(f.name) + '</span>' +
-      '<span class="file-meta">' + badge + timeStr + '<span class="size">' + esc(f.size_display) + '</span><span>' + esc(f.date) + '</span></span>' +
+      '<span class="file-meta">' + badgeHtml(f.type) + dirHint + timeStr + '<span class="size">' + esc(f.size_display) + '</span><span>' + esc(f.date) + '</span></span>' +
     '</div>' +
-    '<div class="actions">' +
-      '<button class="btn-action btn-preview" type="button" data-f="' + esc(f.name) + '">预览</button>' +
-      '<button class="btn-action btn-download" type="button" data-f="' + esc(f.name) + '">下载</button>' +
+    '<div class="actions' + (f.type === "tiff" ? ' always-visible' : '') + '">' +
+      previewBtn +
+      '<button class="btn-action btn-download" type="button" data-f="' + esc(f.path) + '">下载</button>' +
     '</div>' +
   '</div>';
 }
@@ -659,12 +684,14 @@ function renderList(files) {
   if (hist.length === 0) {
     h += '<div class="empty-note">暂无历史扫描文件</div>';
   } else {
-    var lastDate = "";
+    var lastKey = null;
     hist.forEach(function(f) {
-      var dk = f.name.substring(0,8);
-      if (dk !== lastDate) {
-        lastDate = dk;
-        h += '<div class="date-group">' + dk.substring(0,4) + '-' + dk.substring(4,6) + '-' + dk.substring(6,8) + '</div>';
+      // 能解析出时间戳的按「日期」分组；命名无规律的归到「其他」，
+      // 不再拿文件名前 8 个字硬当日期（中文描述名会显示成乱码般的日期）
+      var key = (f.date && f.date !== "—") ? f.date.substring(0, 10) : "其他";
+      if (key !== lastKey) {
+        lastKey = key;
+        h += '<div class="date-group">' + esc(key) + '</div>';
       }
       h += makeRow(f, false);
     });
@@ -723,10 +750,12 @@ async function loadList() {
     var d = await r.json();
     if (!d.success) throw new Error(d.error);
 
-    // 仅展示支持的类型：PDF 与图片（JPG/JPEG/PNG）
-    _files = d.files.filter(function(f) { return f.type === "pdf" || f.type === "image"; });
-    _byName = {};
-    _files.forEach(function(f) { _byName[f.name] = f; });
+    // 展示支持的类型：PDF、可内联预览的图片（JPG/JPEG/PNG）、可下载的 TIFF
+    _files = d.files.filter(function(f) {
+      return f.type === "pdf" || f.type === "image" || f.type === "tiff";
+    });
+    _byPath = {};
+    _files.forEach(function(f) { _byPath[f.path] = f; });
 
     renderList(_files);
   } catch (e) {
@@ -772,9 +801,16 @@ function highlight(fn) {
 
 function openViewer(f) {
   document.getElementById("viewerTitle").textContent = f.name;
-  document.getElementById("viewerBody").innerHTML = f.type === "image"
-    ? '<img class="viewer-img" alt="' + esc(f.name) + '" src="' + previewUrl(f.name) + '">'
-    : '<iframe class="viewer-frame" title="' + esc(f.name) + '" src="' + previewUrl(f.name) + '"></iframe>';
+  var body;
+  if (f.type === "image") {
+    body = '<img class="viewer-img" alt="' + esc(f.name) + '" src="' + previewUrl(f.path) + '">';
+  } else if (f.type === "pdf") {
+    body = '<iframe class="viewer-frame" title="' + esc(f.name) + '" src="' + previewUrl(f.path) + '"></iframe>';
+  } else {
+    // TIFF 等浏览器内核无法内联渲染的格式（正常不会走到这里，行内已不给预览按钮）
+    body = '<div class="empty-note">该格式（' + esc(f.ext || "未知") + '）无法在窗口内预览，请用「另存为…」保存后，用系统看图工具打开。</div>';
+  }
+  document.getElementById("viewerBody").innerHTML = body;
 
   var hint = document.getElementById("viewerHint");
   if (f.type === "pdf") {
@@ -800,7 +836,7 @@ function onViewerKeydown(e) {
 }
 
 function doPreview(fn) {
-  var f = _byName[fn];
+  var f = _byPath[fn];
   if (!f) return;
   highlight(fn);
   if (MODE === "desktop") {
