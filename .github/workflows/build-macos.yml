@@ -192,6 +192,14 @@ jobs:
           shasum -a 256 "$NAME.zip" | tee "$NAME.zip.sha256"
           du -sh "$STAGE/扫描文件浏览器.app"
 
+          # 把 ZIP 内容打进日志：这样在 run 页面就能直接确认
+          # 「包里到底有没有 .app、权限对不对」，不必先下载下来看。
+          echo "--- ZIP 内容 ---"
+          unzip -l "$NAME.zip"
+
+          echo "--- 关键条目的权限位（应为 -rwxr-xr-x）---"
+          unzip -Z "$NAME.zip" | grep -E "MacOS/|启动\.command|Info\.plist|\.icns" || true
+
       - name: 上传 Actions Artifact
         uses: actions/upload-artifact@v6
         with:
