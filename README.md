@@ -127,10 +127,18 @@ scan_browser/
 │   └── index.html          # 前端界面
 ├── 图标.png                 # 图标源图
 ├── icon.ico                # Windows 图标（打包用）
+├── make_icons.py           # 由源图生成 icon.ico / icon.icns
 ├── config.json             # 本地配置（不提交 Git）
 ├── config.example.json     # 配置模板
 ├── requirements.txt        # Python 依赖
 ├── 启动.bat / 启动.command   # 一键启动脚本
+├── build_exe.sh            # Windows EXE 打包脚本
+├── for-mac-build/          # macOS 打包分发包（spec + icon.icns + 文档）
+├── .github/
+│   ├── workflows/
+│   │   └── build-macos.yml           # 云端构建 macOS 版
+│   └── scripts/
+│       └── verify_macos_bundle.py    # 构建后产物校验
 └── 扫描文件浏览器.log        # 运行日志（排障用，运行后生成）
 ```
 
@@ -163,8 +171,22 @@ _build_env\Scripts\pyinstaller --onefile --windowed ^
 
 > ⚠️ 一定要用**干净的虚拟环境**打包。系统 Python 里若装了 torch / matplotlib 等大库，
 > PyInstaller 会把它们一起卷进去，产物体积暴涨且打包极慢。
->
-> macOS 版打包见 `for-mac-build/`。
+
+## 构建 macOS 版（无需 Mac）
+
+macOS 包只能在 macOS 上打，但**不用为此专门养一台 Mac** —— 交给 GitHub Actions：
+
+1. 仓库 → **Actions** → **Build macOS** → **Run workflow**
+2. 选架构（`arm64` 默认 / `x64` / `both`），点 **Run workflow**
+3. 等 5～10 分钟后，在该次 run 页面底部 **Artifacts** 下载
+   `扫描文件浏览器-macOS-arm64.zip`
+
+产物是**内部测试版**：未做 Apple 签名与公证，同事首次打开需右键 →「打开」。
+CI 只做构建完整性校验（bundle 结构、Info.plist、图标、内嵌资源、产物架构、
+启动探针），**不会去连公司内网 SMB**。
+
+细节、架构选择与排障见 `for-mac-build/BUILD_MAC.md`；需要在 Mac 上本地打包的
+备用流程也在同一份文档里。
 
 ## 应用图标
 

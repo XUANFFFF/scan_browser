@@ -3,7 +3,107 @@
 > 内部版，IP 已硬编码在 `launcher.py`，零配置双击即用。
 > 打包后是一个**独立桌面窗口**（不依赖浏览器）。
 
+macOS 包只能在 macOS 上打，但**不需要你有一台 Mac** —— 用 GitHub Actions
+的 macOS runner 就够了。下面两条路，优先走第一条。
+
+| 方式 | 需要 Mac 吗 | 适合 |
+|---|---|---|
+| **① GitHub Actions 云端构建（推荐）** | 不需要 | 日常出包、发给同事测试 |
+| ② 本地 Mac 打包 | 需要 | 改代码时本地快速验证 |
+
 ---
+
+# ① GitHub Actions 云端构建（推荐）
+
+## 怎么点
+
+1. 打开仓库 → **Actions** 标签页
+2. 左侧选 **Build macOS**
+3. 右侧点 **Run workflow**，选择架构
+   - `arm64` —— Apple Silicon（M 系列），**默认**
+   - `x64` —— Intel Mac
+   - `both` —— 两个都构建（会跑两个 runner）
+4. 点绿色的 **Run workflow**，等约 5～10 分钟
+
+## 去哪里拿产物
+
+构建完成后，进入这次 run 的页面，拉到最底部 **Artifacts** 区域，下载：
+
+```
+扫描文件浏览器-macOS-arm64.zip      ← 默认，Apple Silicon
+扫描文件浏览器-macOS-x64.zip        ← 选了 x64/both 才有
+```
+
+Artifact 默认保留 **30 天**，过期就重新跑一次。
+
+## ZIP 里有什么
+
+```
+扫描文件浏览器-macOS-arm64/
+├── 扫描文件浏览器.app      ← 双击即可运行
+├── 启动.command            ← 备用启动脚本（.app 打不开时用）
+└── 使用说明.txt            ← 给同事看的简短说明
+```
+
+同时会附带一个 `.zip.sha256`，想校验完整性可以：
+
+```bash
+shasum -a 256 -c 扫描文件浏览器-macOS-arm64.zip.sha256
+```
+
+## 架构怎么选
+
+| 你的 Mac | 选 |
+|---|---|
+| M1 / M2 / M3 / M4（2020 年后的基本都是） | `arm64` |
+| Intel（2020 年前的 Mac） | `x64` |
+| 不确定 | 菜单栏  →「关于本机」，看「芯片」一行 |
+
+> 怎么看某台机器该用哪个：终端执行 `uname -m`，`arm64` → arm64，`x86_64` → x64。
+>
+> 目前**不做 Universal Binary**（双架构合并）。真遇到 Intel 用户再补 `x64` 就行，
+> 避免为了合并架构引入 `lipo`、双份 Python runtime 这些额外复杂度。
+
+## CI 都检查了什么
+
+云端 runner **访问不到公司内网 SMB**（`192.168.1.115`），所以 CI 不会、也不该
+假装完成了端到端功能测试。它只做「构建是否完整」的检查：
+
+- `扫描文件浏览器.app` 生成了
+- `Contents/MacOS/扫描文件浏览器` 存在且有可执行位
+- `Contents/Info.plist` 存在，且 `CFBundleName` / `CFBundleDisplayName` /
+  `CFBundleIdentifier` 与 spec 一致
+- 图标 `.icns` 进了 bundle
+- onefile 归档里确实打进了 `templates/index.html`
+- 用 `lipo -archs` 打印**真实产物架构**，并和选择的架构比对（不一致直接失败）
+- **启动探针**：真的启动一次程序，请求 `GET /` 与 `GET /api/config`，
+  确认页面能返回、模板能渲染 —— 缺模块会在这里立刻暴露
+- 打印 ZIP 大小与 SHA256
+
+> 探针只访问 `/` 和 `/api/config`（都只读内存配置）。
+> `/api/health`、`/api/files` 会真的去连 SMB，**CI 里一律不调**。
+
+## 首次打开的提示
+
+包是**内部测试版**：不做 Developer ID 签名，也不做公证。所以同事第一次打开
+大概率会看到「无法验证开发者」，处理方式：
+
+```
+右键点「扫描文件浏览器.app」
+  → 选「打开」
+  → 再点一次「打开」
+```
+
+之后双击就能正常用。
+
+## 重新打包
+
+配置（IP、共享名、图标）都在仓库里。要改就改源码，push 之后**重新点一次
+Run workflow** —— Artifact 不会自动更新。
+
+---
+
+# ② 本地 Mac 打包（备用）
 
 ## 前置条件（只需做一次）
 
@@ -34,8 +134,6 @@ pip install -r requirements.txt pyinstaller
 > ℹ️ `pywebview` 在 macOS 上会自动带上 `pyobjc-*` 系列依赖（系统 WebKit 的 Python 绑定），
 > 由 `requirements.txt` 里的 `pywebview>=6.0` 自动拉取，不用单独装。
 
----
-
 ## 打包命令
 
 ```bash
@@ -48,29 +146,57 @@ pyinstaller scan-browser-mac.spec
 
 打包完成后，`dist/` 目录下会生成 **`扫描文件浏览器.app`**。
 
+> ⚠️ 产物是**当前机器架构**的（`target_arch=None`）。在 M 系列 Mac 上打出来的
+> 是 arm64，Intel Mac 上是 x86_64，不会自动出双架构。想要另一个架构，
+> 用上面的方式 ① 选 `both`。
+
+## 手动分发给同事
+
+将以下 **两个文件** 一起发送（打包成 zip 时请用 `ditto`，不要用普通 zip ——
+普通 zip 会丢掉可执行位和签名封条）：
+
+```
+📁 扫描文件浏览器/
+   ├── 扫描文件浏览器.app     ← 双击即可运行，打开独立窗口
+   └── 启动.command           ← 备用启动脚本（.app 打不开时用）
+```
+
+推荐用 `ditto` 打包：
+
+```bash
+ditto -c -k --sequesterRsrc --keepParent dist/扫描文件浏览器.app 扫描文件浏览器-macOS-arm64.zip
+```
+
 ---
+
+# 公共部分
 
 ## 修改 IP
 
-如果你们的 SMB 服务器 IP 不是 `192.168.1.115`，打包前先修改 `launcher.py` 顶部的常量：
+如果你们的 SMB 服务器 IP 不是 `192.168.1.115`，改 `launcher.py` 顶部的常量：
 
 ```python
 INTERNAL_SMB_HOST = "192.168.1.115"      # 改这里
 INTERNAL_SMB_SHARE = "扫描共享文件"        # 共享名（一般不用改）
 ```
 
-改完再执行打包。
-
-> 或者直接用下方的 AI prompt 让 agent 帮你完成这些操作。
-
----
+改完再重新构建（走 ① 的话记得 push 后再点一次 Run workflow）。
 
 ## 修改图标
 
 图标文件是 `icon.icns`，已经由源图 `图标.png` 生成好，spec 里通过 `icon='icon.icns'` 引用，
 **不用做任何事**即可生效。
 
-如果之后想换图标，在 Mac 上用系统自带工具重新生成即可：
+换图标有两种做法：
+
+**A. 在 Windows / 任意平台**（用 Pillow 直接生成，最省事）：
+
+```bash
+pip install pillow
+python make_icons.py        # 会同时更新 icon.ico 与 for-mac-build/icon.icns
+```
+
+**B. 在 Mac 上**用系统自带工具：
 
 ```bash
 # 1. 准备一个 1024x1024 的 PNG，命名为 icon-source.png
@@ -84,29 +210,6 @@ done
 iconutil -c icns icon.iconset -o icon.icns
 ```
 
----
-
-## 分发给同事
-
-将以下 **两个文件** 一起发送：
-
-```
-📁 扫描文件浏览器/
-   ├── 扫描文件浏览器.app     ← 双击即可运行，打开独立窗口
-   └── 启动.command           ← 备用启动脚本（.app 打不开时用）
-```
-
-同事收到后：
-1. 将两个文件放在**同一个文件夹**
-2. 双击 `扫描文件浏览器.app`
-3. 第一次运行需右键 →「打开」（macOS 安全提示，仅首次）
-4. 直接弹出「扫描文件浏览器」独立窗口 ✔
-
-> ⚠️ **安全提示**：macOS 可能会提示"无法验证开发者"。
-> 右键点击 `.app` → 选择「打开」→ 点击「打开」即可。以后双击就能正常打开。
-
----
-
 ## 排障
 
 - 窗口起不来时，用命令行走一次可以看到日志：
@@ -118,3 +221,37 @@ iconutil -c icns icon.iconset -o icon.icns
   ```bash
   dist/扫描文件浏览器.app/Contents/MacOS/扫描文件浏览器 --browser
   ```
+- **CI 构建失败**：先看 run 页面里「校验产物」这一步的输出，脚本会把每一条
+  校验结果打出来（`✅` / `❌`），失败项会集中列在末尾。
+- **双击 .command 报 `bad interpreter` 或提示权限不足**：
+  ```bash
+  chmod +x 启动.command
+  ```
+  仓库里已把该文件标记为可执行（`100755`），正常 clone 不会遇到。
+- **打开后提示「已损坏，无法打开」**：说明文件在传输中被破坏了。
+  终端执行 `xattr -dr com.apple.quarantine 扫描文件浏览器.app` 后再打开。
+
+## 后续（暂未做）
+
+以下几项都不在本阶段的范围内，等真要对外分发时再单独开 Issue：
+
+- Developer ID Application 签名
+- Apple notarization 与 staple
+- `v*` tag 自动构建并作为 Release asset 上传
+- 证书与凭据一律走 GitHub Secrets，**不进仓库、不写进 workflow**
+
+### 想加「tag 自动发 Release」时
+
+在 `.github/workflows/build-macos.yml` 的 `on:` 下补上：
+
+```yaml
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+```
+
+再给 build 步骤加一个 `softprops/action-gh-release` 之类的上传步骤即可。
+注意 `workflow_dispatch` 的 `inputs` 在 tag 触发时是空的，需要给
+`inputs.arch` / `inputs.python_version` 各自补一个 `|| 'arm64'` / `|| '3.12'` 兜底。

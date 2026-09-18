@@ -1,0 +1,224 @@
+# ─────────────────────────────────────────────────────────────────────
+# macOS 版构建（.app）
+#
+# 为什么要有它：macOS 包只能在 macOS 上打，但没必要为此专门养一台 Mac。
+# 这个 workflow 用 GitHub 托管的 macOS runner 来构建，维护者在网页上点一下
+# 就能拿到产物，本地没有 Mac 也不影响发版。
+#
+# 触发：仅 workflow_dispatch（手动）。刻意**不**接普通 commit，
+#       免得每次 push 都白白烧掉 macOS runner 的额度。
+#
+# 产物：Actions Artifact（扫描文件浏览器-macOS-<架构>.zip）
+#       第一阶段不接 Release 自动上传；等手动构建稳定后再单独开 Issue 加。
+#
+# 签名：按「内部测试版」处理 —— 不做 Developer ID 签名、不做公证。
+#       测试同事首次打开时按 Gatekeeper 提示「右键 → 打开」即可。
+#       后续要正式对外分发，再单独开 Issue 处理证书与 notarization。
+# ─────────────────────────────────────────────────────────────────────
+name: Build macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: "要构建的架构（arm64 = Apple Silicon，x64 = Intel，both = 两个都构建）"
+        type: choice
+        options:
+          - arm64
+          - x64
+          - both
+        default: arm64
+      python_version:
+        description: "构建用的 Python 版本"
+        type: string
+        default: "3.12"
+
+# 最小权限：只读仓库内容即可，不需要任何写权限
+permissions:
+  contents: read
+
+# 同一次手动触发只跑一份，防止误点多次把 macOS runner 额度耗掉
+concurrency:
+  group: build-macos-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ── 先把「要构建哪些架构」算成一个矩阵 ──
+  # 单独放一个 job 是因为 matrix 不能直接依赖 inputs 做条件分支，
+  # 先用一个轻量 ubuntu job 把 JSON 拼好，再交给 build job 展开。
+  prepare:
+    name: 计算构建矩阵
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - name: 生成矩阵
+        id: set
+        shell: bash
+        env:
+          ARCH: ${{ inputs.arch }}
+        run: |
+          set -euo pipefail
+
+          # runner 选择说明：
+          #   macos-15       → Apple Silicon (arm64)
+          #   macos-15-intel → Intel (x86_64)
+          # 注意 macos-13 已于 2025-12 退役，不要再用。
+          case "$ARCH" in
+            arm64) m='[{"arch":"arm64","runner":"macos-15","expect":"arm64"}]' ;;
+            x64)   m='[{"arch":"x64","runner":"macos-15-intel","expect":"x86_64"}]' ;;
+            both)  m='[{"arch":"arm64","runner":"macos-15","expect":"arm64"},{"arch":"x64","runner":"macos-15-intel","expect":"x86_64"}]' ;;
+            *) echo "::error::不支持的架构：$ARCH"; exit 1 ;;
+          esac
+
+          echo "matrix=$m" >> "$GITHUB_OUTPUT"
+          {
+            echo "### 本次构建计划"
+            echo ""
+            echo '```json'
+            echo "$m"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "本次将构建：$m"
+
+  # ── 真正的构建 ──
+  build:
+    name: macOS ${{ matrix.arch }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+
+    # 所有 run 步骤都在 for-mac-build/ 里执行 —— spec 里的
+    # entry_point / datas / icon 全是相对路径，必须站在这个目录下打包
+    defaults:
+      run:
+        working-directory: for-mac-build
+
+    env:
+      # 中文与 emoji 在 CI 日志里不要乱码。
+      # PYTHONUTF8 走的是 Python 的 UTF-8 模式，比只设 PYTHONIOENCODING 更彻底；
+      # LANG 用 en_US.UTF-8 是因为 runner 上不一定装了 zh_CN 的 locale，
+      # 指定一个不存在的 locale 只会让各种命令行工具刷警告。
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: utf-8
+      LANG: en_US.UTF-8
+      APP_NAME: 扫描文件浏览器
+      APP_DIR: dist/扫描文件浏览器.app
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+
+      - name: 安装 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: 打印环境信息
+        run: |
+          set -euo pipefail
+          echo "runner 架构 : $(uname -m)"
+          echo "macOS      : $(sw_vers -productVersion) (build $(sw_vers -buildVersion))"
+          echo "Python     : $(python -VV)"
+          echo "解释器路径 : $(command -v python)"
+          echo "工作目录   : $(pwd)"
+
+      # 独立虚拟环境：不要把 runner 上预装的库（numpy/pandas 等）卷进产物。
+      # PyInstaller 是按 import 图收集的，但系统环境里存在的同名包会干扰
+      # hook 判断，干净 venv 是最省事的做法。
+      - name: 创建虚拟环境并安装依赖
+        run: |
+          set -euo pipefail
+          python -m venv .buildenv
+          .buildenv/bin/python -m pip install --upgrade pip
+          .buildenv/bin/python -m pip install -r requirements.txt pyinstaller
+          echo "--- 已安装 ---"
+          .buildenv/bin/python -m pip list
+
+      # 不另起一套打包逻辑：直接用仓库里已经在用的 spec
+      - name: 构建 .app（pyinstaller scan-browser-mac.spec）
+        run: |
+          set -euo pipefail
+          .buildenv/bin/pyinstaller --noconfirm --clean scan-browser-mac.spec
+          echo "--- dist 内容 ---"
+          ls -la dist/
+
+      # 静态校验 + 启动探针。校验逻辑在脚本里，见文件头注释。
+      # 注意：脚本只访问 / 与 /api/config，**不会**去连内网 SMB。
+      - name: 校验产物（结构 / Info.plist / 图标 / 内嵌资源 / 架构 / 启动）
+        run: |
+          set -euo pipefail
+          .buildenv/bin/python "$GITHUB_WORKSPACE/.github/scripts/verify_macos_bundle.py" \
+            --app "$APP_DIR" \
+            --expect-arch "${{ matrix.expect }}" \
+            --summary-out "$RUNNER_TEMP/verify-summary.md"
+
+      # 打包成 zip。用 ditto 而不是 zip：ditto 能保住可执行位、
+      # 扩展属性和签名封条，普通 zip 会把 .app 弄坏。
+      - name: 打包 ZIP
+        run: |
+          set -euo pipefail
+          NAME="扫描文件浏览器-macOS-${{ matrix.arch }}"
+          STAGE="$RUNNER_TEMP/$NAME"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+
+          ditto "$APP_DIR" "$STAGE/扫描文件浏览器.app"
+
+          # git 索引里这个脚本的可执行位曾经丢失过，这里兜一道
+          chmod +x 启动.command
+          cp -p 启动.command "$STAGE/启动.command"
+
+          printf '%s\n' \
+            '扫描文件浏览器（macOS ${{ matrix.arch }}）' \
+            '' \
+            '1. 解压得到本文件夹' \
+            '2. 双击「扫描文件浏览器.app」' \
+            '3. 首次打开若提示「无法验证开发者」：右键点 .app → 选「打开」→ 再点一次「打开」' \
+            '4. 若 .app 打不开，可改用同目录的「启动.command」' \
+            '' \
+            '说明：本包为内部测试版，未做 Apple 签名与公证。' \
+            '需要连公司内网才看得到扫描文件。' \
+            > "$STAGE/使用说明.txt"
+
+          ditto -c -k --sequesterRsrc --keepParent "$STAGE" "$NAME.zip"
+
+          echo "--- 产物 ---"
+          ls -lh "$NAME.zip"
+          shasum -a 256 "$NAME.zip" | tee "$NAME.zip.sha256"
+          du -sh "$STAGE/扫描文件浏览器.app"
+
+      - name: 上传 Actions Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: 扫描文件浏览器-macOS-${{ matrix.arch }}
+          path: |
+            for-mac-build/扫描文件浏览器-macOS-${{ matrix.arch }}.zip
+            for-mac-build/扫描文件浏览器-macOS-${{ matrix.arch }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      # 报告即使前面失败也要写出来，便于定位
+      - name: 写入 Job Summary
+        if: always()
+        run: |
+          {
+            echo ""
+            if [ -f "$RUNNER_TEMP/verify-summary.md" ]; then
+              cat "$RUNNER_TEMP/verify-summary.md"
+            fi
+            echo ""
+            echo "### 产物"
+            if [ -f "扫描文件浏览器-macOS-${{ matrix.arch }}.zip" ]; then
+              echo '```'
+              ls -lh "扫描文件浏览器-macOS-${{ matrix.arch }}.zip"
+              cat "扫描文件浏览器-macOS-${{ matrix.arch }}.zip.sha256"
+              echo '```'
+            else
+              echo "未生成 ZIP"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
