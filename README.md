@@ -194,6 +194,11 @@ Windows 包也可以云端构建：仓库 → **Actions** → **Build Windows** 
 产物 Artifact「扫描文件浏览器-Windows-x64」含两个 EXE + `SHA256SUMS.txt`，
 构建时会先跑单元测试再做 localhost 冒烟探针。
 
+**正式发版**：推 `v*` tag（如 `v2.0.0`）会自动触发 Release 流水线 ——
+并行构建 macOS arm64 包与 Windows 两个 EXE，汇总成合并 `SHA256SUMS.txt`
+后发布到 GitHub Releases（发布说明放 `.github/release-notes/<tag>.md`）。
+用户从 Releases 页面下载，不必再翻 Actions Artifact。
+
 手打单条命令（等价于 `build_exe.sh` 的公开版）：
 
 ```bash
