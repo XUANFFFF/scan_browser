@@ -138,7 +138,9 @@ scan_browser/
 │   ├── workflows/
 │   │   └── build-macos.yml           # 云端构建 macOS 版
 │   └── scripts/
-│       └── verify_macos_bundle.py    # 构建后产物校验
+│       ├── make_macos_zip.py         # 打分发 ZIP（云端/本地共用）
+│       ├── verify_macos_bundle.py    # 校验 PyInstaller 产物（.app）
+│       └── verify_macos_zip.py       # 闭环校验：解开分发 ZIP 再验一遍
 └── 扫描文件浏览器.log        # 运行日志（排障用，运行后生成）
 ```
 
@@ -179,11 +181,14 @@ macOS 包只能在 macOS 上打，但**不用为此专门养一台 Mac** —— 
 1. 仓库 → **Actions** → **Build macOS** → **Run workflow**
 2. 选架构（`arm64` 默认 / `x64` / `both`），点 **Run workflow**
 3. 等 5～10 分钟后，在该次 run 页面底部 **Artifacts** 下载
-   `扫描文件浏览器-macOS-arm64.zip`
+   `扫描文件浏览器-macOS-arm64`
+4. **下载到的是外层 ZIP**（Actions 自己打的）；解开后里面的
+   `扫描文件浏览器-macOS-arm64.zip` 才是真正要发给同事的分发包
 
 产物是**内部测试版**：未做 Apple 签名与公证，同事首次打开需右键 →「打开」。
-CI 只做构建完整性校验（bundle 结构、Info.plist、图标、内嵌资源、产物架构、
-启动探针），**不会去连公司内网 SMB**。
+CI 做两轮校验 —— 先验 PyInstaller 生成的 `.app`，再**把分发 ZIP 解开重验一遍**
+（含中文路径与权限位、`codesign --verify --deep --strict` 签名、启动探针），
+两轮都通过才允许上传 Artifact；全程**不会去连公司内网 SMB**。
 
 细节、架构选择与排障见 `for-mac-build/BUILD_MAC.md`；需要在 Mac 上本地打包的
 备用流程也在同一份文档里。

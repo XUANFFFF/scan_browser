@@ -20,10 +20,20 @@ Finder / Archive Utility 会「猜」成 UTF-8，所以看起来没事 —— �
 会被打成 `-rw-rw-rw-`，Mac 同事解压后双击直接失败。脚本因此对这两类后缀
 强制补上 `0o111`。
 
+（因此**分发给同事的 .app 包只能在 macOS 上打** —— 主程序的可执行位只有
+macOS 文件系统才有。这也是 CI 用 macOS runner 的原因。）
+
+关于 UTF-8 标志位
+-----------------
+标准库的 `ZipInfo` 在写非 ASCII 文件名时**本来就会自动**补上 bit 11，所以下面
+那行显式设置其实是冗余的 —— 保留是为了把意图写明：这是**必须**成立的属性，
+而不是依赖实现细节。真正会踩坑的是 `ditto`/`zip` 这类外部工具（它们不设）。
+
 用法
 ----
     python make_macos_zip.py <待打包目录> <输出.zip>
     python make_macos_zip.py <待打包目录> <输出.zip> --quiet
+    python make_macos_zip.py <待打包目录> <输出.zip> --exclude .buildenv
 
 打包后的 ZIP 里会保留顶级目录名（等价于 ditto 的 --keepParent）。
 """
@@ -40,17 +50,22 @@ import zipfile
 # Windows 上没有可执行位，这几类文件需要强制补
 EXEC_SUFFIXES = (".command", ".sh")
 
+# 默认跳过：这些是本地环境的副产物，不该进分发包
+DEFAULT_EXCLUDES = (".DS_Store", "__pycache__", ".buildenv")
 
-def build(stage_dir, out_zip, quiet=False):
+
+def build(stage_dir, out_zip, quiet=False, excludes=DEFAULT_EXCLUDES):
     stage_dir = os.path.abspath(stage_dir)
     parent = os.path.dirname(stage_dir)          # 保留顶级目录名用
     if not os.path.isdir(stage_dir):
         raise SystemExit("待打包目录不存在：%s" % stage_dir)
 
+    skip = set(excludes or ())
     entries = []                                  # (绝对路径, 归档内路径)
     for dirpath, dirnames, filenames in os.walk(stage_dir):
-        dirnames.sort()
-        filenames.sort()
+        # 路径里任意一层叫这个名字就跳过（本地 venv / 缓存目录等）
+        dirnames[:] = sorted(d for d in dirnames if d not in skip)
+        filenames = sorted(f for f in filenames if f not in skip)
         for name in dirnames:
             full = os.path.join(dirpath, name)
             entries.append((full, os.path.relpath(full, parent)))
@@ -70,10 +85,13 @@ def build(stage_dir, out_zip, quiet=False):
             is_dir = stat.S_ISDIR(st.st_mode)
             if arc.endswith(EXEC_SUFFIXES):
                 mode |= 0o111                     # 补可执行位
+            # 去掉「组/其他可写」：Windows 产出的文件常是 0666，解到 Mac 上
+            # 就变成人人可写，没必要。只清写位，不动读位与执行位。
+            mode &= ~0o022
 
             zi = zipfile.ZipInfo(arc + "/" if is_dir else arc,
                                  time.localtime(st.st_mtime)[:6])
-            zi.flag_bits |= 0x800                 # ← 关键：声明 UTF-8 文件名
+            zi.flag_bits |= 0x800                 # 声明 UTF-8 文件名（见下方说明）
             zi.external_attr = mode << 16         # Unix 权限位
             if is_dir:
                 zi.external_attr |= 0x10          # MS-DOS 目录位，兼容老解压工具
@@ -89,6 +107,8 @@ def build(stage_dir, out_zip, quiet=False):
 
     print("已生成 %s（%d 个条目，解压后 %.1f MB）"
           % (os.path.basename(out_zip), len(entries), total / 1048576))
+    if skip:
+        print("  已跳过：%s" % ", ".join(sorted(skip)))
     if not quiet:
         print("  %-11s %10s  %s" % ("权限", "大小", "路径"))
         for arc, perm, size in written:
@@ -101,6 +121,8 @@ def main():
     ap.add_argument("stage_dir", help="待打包的目录（其目录名会作为 ZIP 的顶级目录）")
     ap.add_argument("out_zip", help="输出的 .zip 路径")
     ap.add_argument("--quiet", action="store_true", help="不打印逐条清单")
+    ap.add_argument("--exclude", action="append", default=[], metavar="NAME",
+                    help="额外跳过路径中任意一层名为 NAME 的目录/文件（可重复）")
     args = ap.parse_args()
 
     try:
@@ -108,7 +130,8 @@ def main():
     except Exception:
         pass
 
-    return build(args.stage_dir, args.out_zip, args.quiet)
+    excludes = tuple(DEFAULT_EXCLUDES) + tuple(args.exclude)
+    return build(args.stage_dir, args.out_zip, args.quiet, excludes)
 
 
 if __name__ == "__main__":

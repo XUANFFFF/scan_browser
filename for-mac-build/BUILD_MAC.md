@@ -30,13 +30,32 @@ macOS 包只能在 macOS 上打，但**不需要你有一台 Mac** —— 用 Gi
 构建完成后，进入这次 run 的页面，拉到最底部 **Artifacts** 区域，下载：
 
 ```
-扫描文件浏览器-macOS-arm64.zip      ← 默认，Apple Silicon
-扫描文件浏览器-macOS-x64.zip        ← 选了 x64/both 才有
+扫描文件浏览器-macOS-arm64      ← 默认，Apple Silicon
+扫描文件浏览器-macOS-x64        ← 选了 x64/both 才有
 ```
 
 Artifact 默认保留 **30 天**，过期就重新跑一次。
 
-## ZIP 里有什么
+### ⚠️ 下载的是「外层 ZIP」，需要先解一层
+
+GitHub Actions 的 Artifact **本身就是一个 ZIP**。所以从网页下载后你会得到一个
+外层包，解开它才会看到真正要发给同事的东西：
+
+```
+下载 → 扫描文件浏览器-macOS-arm64.zip            ← ① 外层（Actions 自动打的）
+        └── 解开后得到 ↓
+            扫描文件浏览器-macOS-arm64.zip       ← ② 内层：真正的分发 ZIP ← 发这个
+            扫描文件浏览器-macOS-arm64.zip.sha256
+```
+
+**①②两层名字一样、别搞混**：外层是 GitHub 打包的，内层才是我们构建出来的。
+把 **②（内层）** 连同 `.sha256` 发给同事；同事直接解压 ② 就能用。
+
+> 命令行下载的话，`gh run download <run-id> -n 扫描文件浏览器-macOS-arm64`
+> 会直接把**内层**的两个文件（分发 ZIP + `.sha256`）铺到你指定的目录，
+> 不用手动解外层。
+
+## 内层分发 ZIP 里有什么
 
 ```
 扫描文件浏览器-macOS-arm64/
@@ -45,7 +64,7 @@ Artifact 默认保留 **30 天**，过期就重新跑一次。
 └── 使用说明.txt            ← 给同事看的简短说明
 ```
 
-同时会附带一个 `.zip.sha256`，想校验完整性可以：
+校验完整性（在 mac 终端，进到文件所在目录）：
 
 ```bash
 shasum -a 256 -c 扫描文件浏览器-macOS-arm64.zip.sha256
@@ -67,7 +86,9 @@ shasum -a 256 -c 扫描文件浏览器-macOS-arm64.zip.sha256
 ## CI 都检查了什么
 
 云端 runner **访问不到公司内网 SMB**（`192.168.1.115`），所以 CI 不会、也不该
-假装完成了端到端功能测试。它只做「构建是否完整」的检查：
+假装完成了端到端功能测试。它只做「构建与分发是否完整」的检查，分两轮：
+
+**第一轮 —— 验 PyInstaller 刚生成的 `.app`**
 
 - `扫描文件浏览器.app` 生成了
 - `Contents/MacOS/扫描文件浏览器` 存在且有可执行位
@@ -80,8 +101,27 @@ shasum -a 256 -c 扫描文件浏览器-macOS-arm64.zip.sha256
   确认页面能返回、模板能渲染 —— 缺模块会在这里立刻暴露
 - 打印 ZIP 大小与 SHA256
 
+**第二轮 —— 验「我们自己打的分发 ZIP」（闭环）**
+
+第一轮验的是「我们以为要发的东西」，而用户实际下载的是打好的 ZIP，中间还隔着
+一次打包。所以打包之后会把 ZIP **解开**，在解出来的东西上再验一遍：
+
+- 解开后中文路径 `.../扫描文件浏览器.app` 存在（顺带验证 ZIP 里非 ASCII
+  文件名都带了 UTF-8 标志位 —— 这正是早期 `ditto` 压包导致中文名乱码的那个坑）
+- 主程序与 `启动.command` 在 ZIP 里**记录了**可执行位，解压后仍然可执行
+- `codesign --verify --deep --strict` 校验解压后 `.app` 的**签名**
+  （PyInstaller 默认做 ad-hoc 签名，bundle 里有
+  `Contents/_CodeSignature/CodeResources`；签名嵌在 Mach-O 里，解压不影响）
+- 把解压出来的 `.app` 再交给第一轮的校验脚本跑一遍：结构 / Info.plist / 图标 /
+  内嵌资源 / 架构 / 启动探针
+
+**只有两轮都全绿，才会上传 Artifact。**
+
 > 探针只访问 `/` 和 `/api/config`（都只读内存配置）。
 > `/api/health`、`/api/files` 会真的去连 SMB，**CI 里一律不调**。
+>
+> 这些检查都在 macOS runner 上真实执行，日志能在 run 页面直接看；
+> ZIP 的逐条清单（权限位 / 大小 / 路径）也会打进日志，不必先下载就能核对。
 
 ## 首次打开的提示
 
@@ -152,20 +192,39 @@ pyinstaller scan-browser-mac.spec
 
 ## 手动分发给同事
 
-将以下 **两个文件** 一起发送（打包成 zip 时请用 `ditto`，不要用普通 zip ——
-普通 zip 会丢掉可执行位和签名封条）：
-
-```
-📁 扫描文件浏览器/
-   ├── 扫描文件浏览器.app     ← 双击即可运行，打开独立窗口
-   └── 启动.command           ← 备用启动脚本（.app 打不开时用）
-```
-
-推荐用 `ditto` 打包：
+打包好的 `dist/扫描文件浏览器.app` 本身不建议直接发（.app 是「文件夹」，
+跨机器传输容易丢权限）。**按和云端完全一样的布局**打成一个分发 ZIP 再发：
 
 ```bash
-ditto -c -k --sequesterRsrc --keepParent dist/扫描文件浏览器.app 扫描文件浏览器-macOS-arm64.zip
+# 仍在 for-mac-build/ 目录下
+
+# 1) 建暂存目录（目录名 = ZIP 里的顶级目录名）
+STAGE="/tmp/扫描文件浏览器-macOS-arm64"
+rm -rf "$STAGE" && mkdir -p "$STAGE"
+
+# 2) 用 ditto 复制 .app —— 它能保住元数据与签名封条
+ditto dist/扫描文件浏览器.app "$STAGE/扫描文件浏览器.app"
+
+# 3) 带上备用启动脚本
+chmod +x 启动.command
+cp -p 启动.command "$STAGE/启动.command"
+
+# 4) 打 ZIP —— 必须用仓库里的 make_macos_zip.py，不要用 ditto -c -k / zip -r
+python3 ../.github/scripts/make_macos_zip.py "$STAGE" 扫描文件浏览器-macOS-arm64.zip
 ```
+
+> ⚠️ **为什么不能直接 `ditto -c -k` / `zip -r` 压包**：ZIP 规范要求非 ASCII
+> 文件名设置「UTF-8 标志位」，而 `ditto` 写进去的是 UTF-8 字节却**不设这个标志**。
+> 结果：Finder 会猜成 UTF-8 看着正常，但终端 `unzip` 按规范默认 cp437 解码 →
+> 中文名全乱（`启动.command` 变乱码，同事拿到直接懵）。
+> `make_macos_zip.py` 会显式设标志位 + 保留可执行位，谁解压都对。
+> **云端与本地共用这一个脚本**，避免两套逻辑跑偏。
+>
+> `ditto` 在这里只负责**复制 .app**（不是压 ZIP），它保住元数据与签名封条，
+> 这一步仍然需要。
+
+得到的 `扫描文件浏览器-macOS-arm64.zip` 就是最终分发包，连同
+`shasum -a 256` 的结果一起发给同事即可。
 
 ---
 
@@ -221,8 +280,17 @@ iconutil -c icns icon.iconset -o icon.icns
   ```bash
   dist/扫描文件浏览器.app/Contents/MacOS/扫描文件浏览器 --browser
   ```
-- **CI 构建失败**：先看 run 页面里「校验产物」这一步的输出，脚本会把每一条
-  校验结果打出来（`✅` / `❌`），失败项会集中列在末尾。
+- **CI 构建失败**：先看 run 页面里「校验产物」与「分发 ZIP 闭环验证」这两步的
+  输出，脚本会把每一条校验结果打出来（`✅` / `❌`），失败项集中列在末尾；
+  签名相关的问题会直接打印 `codesign` 的原始输出，便于定位。
+- **本地想复现 ZIP 闭环校验**（在 Mac 上、有 .app 时）：
+  ```bash
+  python3 ../.github/scripts/verify_macos_zip.py \
+    --zip 扫描文件浏览器-macOS-arm64.zip \
+    --dest /tmp/roundtrip --expect-arch arm64
+  ```
+  它会解开 ZIP、验证中文路径与权限位、跑 `codesign`，再调
+  `verify_macos_bundle.py` 完整验一遍（含启动探针）。
 - **双击 .command 报 `bad interpreter` 或提示权限不足**：
   ```bash
   chmod +x 启动.command

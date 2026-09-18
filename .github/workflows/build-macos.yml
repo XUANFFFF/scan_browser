@@ -9,6 +9,8 @@
 #       免得每次 push 都白白烧掉 macOS runner 的额度。
 #
 # 产物：Actions Artifact（扫描文件浏览器-macOS-<架构>.zip）
+#       注意 Artifact 本身是一个外层 ZIP，里面装的是「真正的分发 ZIP +
+#       它的 .sha256」；下载后要先解开外层，再把内层分发给同事。
 #       第一阶段不接 Release 自动上传；等手动构建稳定后再单独开 Issue 加。
 #
 # 签名：按「内部测试版」处理 —— 不做 Developer ID 签名、不做公证。
@@ -37,10 +39,12 @@ on:
 permissions:
   contents: read
 
-# 同一次手动触发只跑一份，防止误点多次把 macOS runner 额度耗掉
+# 防误点：同一个 ref 上只保留最新一次手动触发，新触发的会直接取消还在跑的旧 run。
+# 用 cancel-in-progress: true 而不是 false —— false 只是把后来的排队，前面的照跑完，
+# 反而更费 macOS runner 额度。
 concurrency:
   group: build-macos-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   # ── 先把「要构建哪些架构」算成一个矩阵 ──
@@ -197,6 +201,22 @@ jobs:
           shasum -a 256 "$NAME.zip" | tee "$NAME.zip.sha256"
           du -sh "$STAGE/扫描文件浏览器.app"
 
+      # ── 分发 ZIP 闭环验证 ──
+      # 上一步「校验产物」验的是 PyInstaller 刚生成的 dist/*.app，那是
+      # 「我们以为要发的东西」；用户实际拿到的是我们自己打的 ZIP，中间还隔着
+      # 「复制到暂存目录 → 写 ZIP」。ditto 不设 UTF-8 标志位导致中文名乱码，
+      # 就是典型的「生成物没问题、分发物有问题」。
+      # 这一步把 ZIP 解开、在解出来的东西上再验一遍（含 codesign 签名校验，
+      # 并复用它再跑一次 verify_macos_bundle.py）。全部通过才允许上传 Artifact。
+      - name: 分发 ZIP 闭环验证（解压 → 结构/权限/签名 → 复用 bundle 校验）
+        run: |
+          set -euo pipefail
+          .buildenv/bin/python "$GITHUB_WORKSPACE/.github/scripts/verify_macos_zip.py" \
+            --zip "扫描文件浏览器-macOS-${{ matrix.arch }}.zip" \
+            --dest "$RUNNER_TEMP/roundtrip" \
+            --expect-arch "${{ matrix.expect }}" \
+            --summary-out "$RUNNER_TEMP/verify-zip-summary.md"
+
       - name: 上传 Actions Artifact
         uses: actions/upload-artifact@v6
         with:
@@ -215,6 +235,9 @@ jobs:
             echo ""
             if [ -f "$RUNNER_TEMP/verify-summary.md" ]; then
               cat "$RUNNER_TEMP/verify-summary.md"
+            fi
+            if [ -f "$RUNNER_TEMP/verify-zip-summary.md" ]; then
+              cat "$RUNNER_TEMP/verify-zip-summary.md"
             fi
             echo ""
             echo "### 产物"
